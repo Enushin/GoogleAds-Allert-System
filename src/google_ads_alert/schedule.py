@@ -32,8 +32,9 @@ class DailyScheduleConfig:
     end_minute:
         Minute component (0-59) of the final run of the day.
     run_count:
-        Desired number of executions per day. Defaults to three so alerts land
-        at 8:00, 14:00, and 20:00 in the Asia/Tokyo timezone.
+        Desired number of executions per day. Must be at least one. Defaults to
+        three so alerts land at 8:00, 14:00, and 20:00 in the Asia/Tokyo
+        timezone.
     """
 
     timezone: ZoneInfo | None = None
@@ -85,7 +86,10 @@ def generate_daily_schedule(
     start_dt = _build_anchor_datetime(
         target_date, cfg.start_hour, cfg.start_minute, tz
     )
-    if cfg.run_count <= 1:
+    if cfg.run_count <= 0:
+        raise ValueError("run_count must be greater than 0")
+
+    if cfg.run_count == 1:
         return [start_dt]
 
     end_dt = _build_anchor_datetime(

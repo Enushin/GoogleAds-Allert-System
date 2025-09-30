@@ -96,6 +96,14 @@ def test_generate_schedule_invalid_minutes_raise_error():
         )
 
 
+def test_generate_schedule_non_positive_run_count_raises_error():
+    with pytest.raises(ValueError):
+        generate_daily_schedule(date(2024, 1, 5), DailyScheduleConfig(run_count=0))
+
+    with pytest.raises(ValueError):
+        generate_daily_schedule(date(2024, 1, 5), DailyScheduleConfig(run_count=-3))
+
+
 def test_find_next_run_datetime_returns_upcoming_entry():
     schedule = generate_daily_schedule(date(2024, 1, 5))
     reference = schedule[0] - timedelta(minutes=15)

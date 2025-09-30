@@ -29,8 +29,11 @@ def _format_currency(value: float, currency_symbol: str) -> str:
 
 
 def _format_gap(value: float, currency_symbol: str) -> str:
-    sign = "+" if value > 0 else ""
-    return f"{sign}{_format_currency(value, currency_symbol)}"
+    if value == 0:
+        return _format_currency(0, currency_symbol)
+
+    sign = "+" if value > 0 else "-"
+    return f"{sign}{_format_currency(abs(value), currency_symbol)}"
 
 
 def _format_percentage(value: float) -> str:

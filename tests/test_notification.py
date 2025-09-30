@@ -67,3 +67,22 @@ def test_build_slack_payload_without_monthly_section():
         "日次予測: $170,000"
     )
 
+
+def test_build_slack_payload_formats_budget_gaps_with_signs():
+    params = CombinedForecastInput(
+        as_of=datetime(2024, 4, 15, 12, 0, tzinfo=TOKYO),
+        current_spend=150000.0,
+        month_to_date_spend=100000.0,
+        daily_budget=200000.0,
+        monthly_budget=400000.0,
+    )
+    forecast = build_combined_forecast(params)
+
+    payload = build_slack_notification_payload(forecast)
+
+    daily_fields = [field["text"] for field in payload["blocks"][2]["fields"]]
+    assert any("差分 +¥100,000" in text for text in daily_fields)
+
+    monthly_fields = [field["text"] for field in payload["blocks"][3]["fields"]]
+    assert any("差分 -¥200,000" in text for text in monthly_fields)
+

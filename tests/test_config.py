@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from zoneinfo import ZoneInfo
 
+from pathlib import Path
+
 import pytest
 
 from google_ads_alert.config import (
@@ -9,6 +11,8 @@ from google_ads_alert.config import (
     ConfigError,
     SlackConfig,
     load_config,
+    load_config_from_env_file,
+    load_env_file,
     load_google_ads_config,
     load_schedule_config,
     load_slack_config,
@@ -119,4 +123,52 @@ def test_load_slack_config_invalid_boolean_raises() -> None:
 
     with pytest.raises(ConfigError):
         load_slack_config(env)
+
+
+def test_load_env_file_parses_values(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        """
+        # Comment line
+        export GOOGLE_ADS_DEVELOPER_TOKEN=token
+        GOOGLE_ADS_CLIENT_ID="client-id"
+        GOOGLE_ADS_CLIENT_SECRET='client-secret'
+        GOOGLE_ADS_REFRESH_TOKEN=refresh-token # trailing comment
+        EMPTY_VALUE=
+        
+        SLACK_WEBHOOK_URL=https://hooks.slack.test/T000/B000/XXX
+        """.strip()
+    )
+
+    values = load_env_file(env_file)
+
+    assert values["GOOGLE_ADS_DEVELOPER_TOKEN"] == "token"
+    assert values["GOOGLE_ADS_CLIENT_ID"] == "client-id"
+    assert values["GOOGLE_ADS_CLIENT_SECRET"] == "client-secret"
+    assert values["GOOGLE_ADS_REFRESH_TOKEN"] == "refresh-token"
+    assert values["EMPTY_VALUE"] == ""
+    assert values["SLACK_WEBHOOK_URL"].endswith("XXX")
+
+
+def test_load_config_from_env_file_merges_with_base_env(tmp_path: Path) -> None:
+    env_file = tmp_path / "config.env"
+    env_file.write_text(
+        """
+        GOOGLE_ADS_DEVELOPER_TOKEN=file-token
+        GOOGLE_ADS_CLIENT_SECRET=file-secret
+        ALERT_RUN_COUNT=1
+        """.strip()
+    )
+
+    base_env = _base_env() | {
+        "GOOGLE_ADS_CLIENT_SECRET": "base-secret",
+        "GOOGLE_ADS_CLIENT_ID": "base-client",
+    }
+
+    config = load_config_from_env_file(env_file, base_env=base_env)
+
+    assert config.google_ads.credentials.developer_token == "file-token"
+    assert config.google_ads.credentials.client_secret == "file-secret"
+    assert config.google_ads.credentials.client_id == "base-client"
+    assert config.schedule.run_count == 1
 

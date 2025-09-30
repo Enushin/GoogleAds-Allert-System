@@ -60,6 +60,15 @@ SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 SLACK_FALLBACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 ```
 
+`.env` として保存した後、Pythonコードからは `google_ads_alert.config.load_config_from_env_file` を呼び出すことで、環境変数とマージした
+設定を一括で読み込める。
+
+```python
+from google_ads_alert.config import load_config_from_env_file
+
+config = load_config_from_env_file(".env")
+```
+
 ## 運用前チェックリスト
 - [ ] すべての認証情報が最新で、期限切れではないことを確認した。
 - [ ] テスト用アカウントでAPI呼び出しが成功することを確認した。

@@ -98,6 +98,22 @@ class DailyCostSummary:
         return self.total_cost_micros / 1_000_000
 
 
+@dataclass(frozen=True)
+class MonthToDateCostSummary:
+    """Aggregated spend metrics for the month-to-date reporting window."""
+
+    as_of: datetime
+    report_start: datetime
+    report_end: datetime
+    total_cost_micros: int
+
+    @property
+    def total_cost(self) -> float:
+        """Return the cost converted from micros to standard currency units."""
+
+        return self.total_cost_micros / 1_000_000
+
+
 class GoogleAdsSearchTransport(Protocol):
     """Protocol describing the minimal Google Ads search capability."""
 
@@ -115,6 +131,20 @@ def build_daily_query_range(
     day_start = localized.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
     return QueryRange(start=day_start, end=day_end)
+
+
+def build_month_to_date_query_range(
+    as_of: datetime, timezone: ZoneInfo | None = None
+) -> QueryRange:
+    """Return a reporting window covering the month-to-date span of ``as_of``."""
+
+    tz = _coerce_timezone(timezone)
+    localized = _localize(as_of, tz)
+    month_start = localized.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_day = localized.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+        days=1
+    )
+    return QueryRange(start=month_start, end=next_day)
 
 
 def build_cost_query(query_range: QueryRange) -> str:
@@ -165,12 +195,7 @@ class GoogleAdsCostService:
         self._retry_config = retry_config or RetryConfig()
         self._sleep = sleep or time.sleep
 
-    def fetch_daily_cost(self, as_of: datetime) -> DailyCostSummary:
-        """Retrieve and aggregate the spend for the day of ``as_of``."""
-
-        tz = _coerce_timezone(self._config.timezone)
-        localized_as_of = _localize(as_of, tz)
-        query_range = build_daily_query_range(localized_as_of, tz)
+    def _execute_cost_query(self, query_range: QueryRange) -> int:
         query = build_cost_query(query_range)
 
         attempt = 0
@@ -183,6 +208,7 @@ class GoogleAdsCostService:
                 total_micros = 0
                 for row in self._transport.search(self._config.customer_id, query):
                     total_micros += _extract_cost_micros(row)
+                return total_micros
             except Exception as exc:
                 last_error = exc
                 if not self._retry_config.is_retryable(exc) or attempt >= self._retry_config.max_attempts:
@@ -191,14 +217,35 @@ class GoogleAdsCostService:
                 if delay > 0:
                     self._sleep(delay)
                 delay *= self._retry_config.backoff_multiplier
-                continue
-            else:
-                break
 
-        if last_error is not None and attempt >= self._retry_config.max_attempts:
+        if last_error is not None:
             raise last_error
+        raise RuntimeError("Cost query failed without executing")
+
+    def fetch_daily_cost(self, as_of: datetime) -> DailyCostSummary:
+        """Retrieve and aggregate the spend for the day of ``as_of``."""
+
+        tz = _coerce_timezone(self._config.timezone)
+        localized_as_of = _localize(as_of, tz)
+        query_range = build_daily_query_range(localized_as_of, tz)
+        total_micros = self._execute_cost_query(query_range)
 
         return DailyCostSummary(
+            as_of=localized_as_of,
+            report_start=query_range.start,
+            report_end=query_range.end,
+            total_cost_micros=total_micros,
+        )
+
+    def fetch_month_to_date_cost(self, as_of: datetime) -> MonthToDateCostSummary:
+        """Retrieve the aggregated spend from the start of the month to ``as_of``."""
+
+        tz = _coerce_timezone(self._config.timezone)
+        localized_as_of = _localize(as_of, tz)
+        query_range = build_month_to_date_query_range(localized_as_of, tz)
+        total_micros = self._execute_cost_query(query_range)
+
+        return MonthToDateCostSummary(
             as_of=localized_as_of,
             report_start=query_range.start,
             report_end=query_range.end,
@@ -208,6 +255,7 @@ class GoogleAdsCostService:
 
 __all__ = [
     "DailyCostSummary",
+    "MonthToDateCostSummary",
     "GoogleAdsClientConfig",
     "GoogleAdsCostService",
     "GoogleAdsCredentials",
@@ -216,5 +264,6 @@ __all__ = [
     "QueryRange",
     "build_cost_query",
     "build_daily_query_range",
+    "build_month_to_date_query_range",
 ]
 

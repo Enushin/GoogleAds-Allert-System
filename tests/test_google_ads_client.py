@@ -9,10 +9,12 @@ from google_ads_alert.google_ads_client import (
     GoogleAdsClientConfig,
     GoogleAdsCostService,
     GoogleAdsCredentials,
-    RetryConfig,
+    MonthToDateCostSummary,
     QueryRange,
+    RetryConfig,
     build_cost_query,
     build_daily_query_range,
+    build_month_to_date_query_range,
 )
 
 import pytest
@@ -35,6 +37,16 @@ def test_build_daily_query_range_localizes_naive_datetime() -> None:
     query_range = build_daily_query_range(as_of, tz)
 
     assert query_range.start == datetime(2024, 5, 15, tzinfo=tz)
+    assert query_range.end == datetime(2024, 5, 16, tzinfo=tz)
+
+
+def test_build_month_to_date_query_range_spans_first_day() -> None:
+    tz = ZoneInfo("Asia/Tokyo")
+    as_of = datetime(2024, 5, 15, 10, 30, tzinfo=ZoneInfo("UTC"))
+
+    query_range = build_month_to_date_query_range(as_of, tz)
+
+    assert query_range.start == datetime(2024, 5, 1, tzinfo=tz)
     assert query_range.end == datetime(2024, 5, 16, tzinfo=tz)
 
 
@@ -83,6 +95,38 @@ def test_cost_service_aggregates_rows_and_converts_timezone() -> None:
     customer_id, query = transport.requests[0]
     assert customer_id == "123-456-7890"
     assert "segments.date" in query
+
+
+def test_month_to_date_cost_service_aggregates_rows() -> None:
+    tz = ZoneInfo("Asia/Tokyo")
+    credentials = GoogleAdsCredentials(
+        developer_token="dev",
+        client_id="client",
+        client_secret="secret",
+        refresh_token="refresh",
+    )
+    config = GoogleAdsClientConfig(customer_id="123-456-7890", credentials=credentials, timezone=tz)
+    rows = [
+        {"metrics": {"cost_micros": 2_000_000}},
+        {"metrics": {"cost_micros": "3500000"}},
+        {},
+    ]
+    transport = DummyTransport(rows)
+    service = GoogleAdsCostService(config, transport)
+
+    summary = service.fetch_month_to_date_cost(datetime(2024, 6, 10, 5, 0))
+
+    assert isinstance(summary, MonthToDateCostSummary)
+    assert summary.as_of.tzinfo == tz
+    assert summary.report_start == datetime(2024, 6, 1, tzinfo=tz)
+    assert summary.report_end == datetime(2024, 6, 11, tzinfo=tz)
+    assert summary.total_cost_micros == 5_500_000
+    assert summary.total_cost == 5.5
+
+    assert transport.requests
+    _, query = transport.requests[0]
+    assert "2024-06-01" in query
+    assert "2024-06-10" in query
 
 
 class FlakyTransport:

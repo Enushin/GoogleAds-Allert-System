@@ -41,7 +41,8 @@ language: "ja"
 - [x] 取得データを基に当日24時の着地予測を算出するBudget Predictorのプロトタイプを作成し、単純比例ロジックのテストを整備する。
 - [x] 通知テンプレート（本文構成、メトリクス表示フォーマット）を定義し、Slack等へメッセージ送信するNotification Handlerを実装する。
 - [ ] スケジューラ（APSchedulerやCloud Scheduler等）を活用し、ユーザー指定時刻でのジョブ実行を実現する。
-- [ ] Combined forecast結果を通知フォーマットへ統合し、UI／メッセージ例を作成する。
+- [x] Combined forecast結果を通知フォーマットへ統合し、UI／メッセージ例を作成する。
+    - `workflow.py` にスナップショット作成とSlackペイロード送信ユーティリティを追加し、`build_slack_notification_payload` を利用した通知処理を一元化した。
 - [ ] プロジェクト全体の設定検証コマンド（`python -m google_ads_alert doctor`想定）を実装し、運用前セルフチェック手順を整備する。
 
 ## 5. 運用と監視

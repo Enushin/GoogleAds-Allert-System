@@ -1,12 +1,15 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from zoneinfo import ZoneInfo
 
 from google_ads_alert.schedule import (
     DailyScheduleConfig,
+    DailyScheduleWindow,
     find_next_run_datetime,
     generate_daily_schedule,
+    generate_upcoming_run_times,
+    generate_upcoming_run_windows,
 )
 
 
@@ -113,6 +116,20 @@ def test_find_next_run_datetime_returns_upcoming_entry():
     assert next_run == schedule[0]
 
 
+def test_find_next_run_datetime_uses_reference_timezone_for_naive_schedule():
+    schedule = [
+        entry.replace(tzinfo=None) for entry in generate_daily_schedule(date(2024, 1, 5))
+    ]
+    now = datetime(2024, 1, 5, 7, 0, tzinfo=ZoneInfo("UTC"))
+
+    next_run = find_next_run_datetime(now, schedule)
+
+    assert next_run is not None
+    assert isinstance(next_run.tzinfo, ZoneInfo)
+    assert next_run.tzinfo.key == "UTC"
+    assert next_run.hour == 8
+
+
 def test_find_next_run_datetime_handles_timezone_conversion():
     schedule = generate_daily_schedule(date(2024, 1, 5))
     now_utc = datetime(2024, 1, 5, 9, 0, tzinfo=ZoneInfo("UTC"))
@@ -128,3 +145,83 @@ def test_find_next_run_datetime_returns_none_when_all_past():
     after_last = schedule[-1] + timedelta(minutes=1)
 
     assert find_next_run_datetime(after_last, schedule) is None
+
+
+def test_generate_upcoming_run_times_filters_past_entries_and_future_days():
+    now = datetime(2024, 1, 5, 10, 0, tzinfo=TOKYO)
+
+    upcoming = generate_upcoming_run_times(now, days=2)
+
+    expected_hours = [14, 20, 8, 14, 20]
+    assert [run.hour for run in upcoming] == expected_hours
+    assert upcoming[0].date() == date(2024, 1, 5)
+    assert upcoming[-1].date() == date(2024, 1, 6)
+
+
+def test_generate_upcoming_run_times_localizes_naive_reference():
+    london = ZoneInfo("Europe/London")
+    config = DailyScheduleConfig(timezone=london, start_hour=9, end_hour=18, run_count=3)
+    now = datetime(2024, 6, 1, 8, 30)
+
+    upcoming = generate_upcoming_run_times(now, days=1, config=config)
+
+    assert all(run.tzinfo == london for run in upcoming)
+    assert [(run.hour, run.minute) for run in upcoming] == [
+        (9, 0),
+        (13, 30),
+        (18, 0),
+    ]
+    assert upcoming[0] >= now.replace(tzinfo=london)
+
+
+def test_generate_upcoming_run_times_uses_reference_timezone_when_config_unspecified():
+    london = ZoneInfo("Europe/London")
+    now = datetime(2024, 6, 1, 8, 30, tzinfo=london)
+
+    upcoming = generate_upcoming_run_times(now, days=1)
+
+    assert all(run.tzinfo == london for run in upcoming)
+    assert [run.hour for run in upcoming] == [14, 20]
+    assert all(run.date() == now.date() for run in upcoming)
+
+
+def test_generate_upcoming_run_times_interprets_fixed_offset_timezone_reference():
+    now = datetime(2024, 6, 1, 8, 30, tzinfo=timezone.utc)
+
+    upcoming = generate_upcoming_run_times(now, days=1)
+
+    assert all(isinstance(run.tzinfo, ZoneInfo) for run in upcoming)
+    assert {run.tzinfo.key for run in upcoming} == {"UTC"}
+    assert [run.hour for run in upcoming] == [14, 20]
+    assert all(run.date() == now.date() for run in upcoming)
+
+
+def test_generate_upcoming_run_times_rejects_non_positive_days():
+    now = datetime(2024, 1, 5, 8, 0, tzinfo=TOKYO)
+
+    with pytest.raises(ValueError):
+        generate_upcoming_run_times(now, days=0)
+
+
+def test_generate_upcoming_run_windows_includes_empty_current_day():
+    now = datetime(2024, 1, 5, 22, 0, tzinfo=TOKYO)
+
+    windows = generate_upcoming_run_windows(now, days=2)
+
+    assert [window.date for window in windows] == [date(2024, 1, 5), date(2024, 1, 6)]
+    assert windows[0].run_times == ()
+    assert isinstance(windows[0], DailyScheduleWindow)
+    assert [run.hour for run in windows[1].run_times] == [8, 14, 20]
+
+
+def test_generate_upcoming_run_windows_localizes_naive_reference():
+    london = ZoneInfo("Europe/London")
+    config = DailyScheduleConfig(timezone=london, start_hour=9, end_hour=18, run_count=3)
+    now = datetime(2024, 6, 1, 8, 30)
+
+    windows = generate_upcoming_run_windows(now, days=1, config=config)
+
+    assert len(windows) == 1
+    assert windows[0].date == date(2024, 6, 1)
+    assert windows[0].run_times[0] >= now.replace(tzinfo=london)
+    assert all(run.tzinfo == london for run in windows[0].run_times)

@@ -8,6 +8,7 @@ from .forecast import (
     calculate_daily_projection,
     calculate_monthly_pace,
 )
+from .schedule import DailyScheduleConfig, generate_daily_schedule
 
 __all__ = [
     "DailyForecastInput",
@@ -16,4 +17,6 @@ __all__ = [
     "MonthlyPaceResult",
     "calculate_daily_projection",
     "calculate_monthly_pace",
+    "DailyScheduleConfig",
+    "generate_daily_schedule",
 ]

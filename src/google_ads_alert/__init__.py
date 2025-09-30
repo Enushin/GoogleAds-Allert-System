@@ -12,6 +12,7 @@ from .forecast import (
     build_combined_forecast,
 )
 from .schedule import DailyScheduleConfig, generate_daily_schedule
+from .notification import SlackNotificationOptions, build_slack_notification_payload
 
 __all__ = [
     "DailyForecastInput",
@@ -25,4 +26,6 @@ __all__ = [
     "build_combined_forecast",
     "DailyScheduleConfig",
     "generate_daily_schedule",
+    "SlackNotificationOptions",
+    "build_slack_notification_payload",
 ]

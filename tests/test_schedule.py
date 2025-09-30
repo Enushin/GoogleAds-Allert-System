@@ -1,9 +1,13 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 from zoneinfo import ZoneInfo
 
-from google_ads_alert.schedule import DailyScheduleConfig, generate_daily_schedule
+from google_ads_alert.schedule import (
+    DailyScheduleConfig,
+    find_next_run_datetime,
+    generate_daily_schedule,
+)
 
 
 TOKYO = ZoneInfo("Asia/Tokyo")
@@ -90,3 +94,29 @@ def test_generate_schedule_invalid_minutes_raise_error():
         generate_daily_schedule(
             date(2024, 1, 5), DailyScheduleConfig(end_minute=60)
         )
+
+
+def test_find_next_run_datetime_returns_upcoming_entry():
+    schedule = generate_daily_schedule(date(2024, 1, 5))
+    reference = schedule[0] - timedelta(minutes=15)
+
+    next_run = find_next_run_datetime(reference, schedule)
+
+    assert next_run == schedule[0]
+
+
+def test_find_next_run_datetime_handles_timezone_conversion():
+    schedule = generate_daily_schedule(date(2024, 1, 5))
+    now_utc = datetime(2024, 1, 5, 9, 0, tzinfo=ZoneInfo("UTC"))
+
+    next_run = find_next_run_datetime(now_utc, schedule)
+
+    assert next_run == schedule[-1]
+    assert next_run.tzinfo == TOKYO
+
+
+def test_find_next_run_datetime_returns_none_when_all_past():
+    schedule = generate_daily_schedule(date(2024, 1, 5))
+    after_last = schedule[-1] + timedelta(minutes=1)
+
+    assert find_next_run_datetime(after_last, schedule) is None

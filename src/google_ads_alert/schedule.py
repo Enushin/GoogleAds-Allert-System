@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import List
+from typing import Iterable, List, Sequence
 
 from zoneinfo import ZoneInfo
 
@@ -109,4 +109,57 @@ def generate_daily_schedule(
     return schedule
 
 
-__all__ = ["DailyScheduleConfig", "generate_daily_schedule"]
+def find_next_run_datetime(
+    now: datetime,
+    schedule: Sequence[datetime],
+    timezone: ZoneInfo | None = None,
+) -> datetime | None:
+    """Return the next scheduled execution time at or after ``now``.
+
+    Parameters
+    ----------
+    now:
+        Reference datetime used to locate the next execution. Naive datetimes
+        are interpreted in the detected timezone.
+    schedule:
+        Collection of scheduled execution times. Entries may be naive or
+        timezone aware. The sequence is not required to be sorted.
+    timezone:
+        Optional override timezone applied when neither ``schedule`` entries
+        nor ``now`` provide one. Defaults to the project standard timezone.
+    """
+
+    if not schedule:
+        return None
+
+    tz = timezone
+    for candidate in schedule:
+        if candidate.tzinfo is not None:
+            tz = candidate.tzinfo
+            break
+    tz = _coerce_timezone(tz)
+
+    if now.tzinfo is None:
+        localized_now = now.replace(tzinfo=tz)
+    else:
+        localized_now = now.astimezone(tz)
+
+    def _normalize(entries: Iterable[datetime]) -> List[datetime]:
+        normalized: List[datetime] = []
+        for entry in entries:
+            if entry.tzinfo is None:
+                normalized.append(entry.replace(tzinfo=tz))
+            else:
+                normalized.append(entry.astimezone(tz))
+        return normalized
+
+    normalized_schedule = sorted(_normalize(schedule))
+
+    for run in normalized_schedule:
+        if run >= localized_now:
+            return run
+
+    return None
+
+
+__all__ = ["DailyScheduleConfig", "generate_daily_schedule", "find_next_run_datetime"]

@@ -81,6 +81,19 @@ config = load_config_from_env_file(".env")
 - Google Ads APIへの問い合わせには `GoogleAdsSearchTransport` 実装が必要であり、環境変数 `GOOGLE_ADS_TRANSPORT` に `module:callable` 形式でファクトリ関数を指定する。例: `GOOGLE_ADS_TRANSPORT="my_project.transports:build_transport"`。
 - 既存のSlack Webhook以外の送信方法を利用したい場合は、`SLACK_SENDER_FACTORY` にカスタム送信ファクトリを指定するとCLIから差し替えられる。
 - これらのファクトリは `(config: ApplicationConfig, env: Mapping[str, str]) -> Transport/Sender` 形式で実装し、`.env` と同じ値を参照できるようにしておく。
+- 実データが未準備の段階では、`google_ads_alert.transports.demo:build_transport` を `GOOGLE_ADS_TRANSPORT` に設定することで、固定値の費用データを返すダミートランスポートを利用できる。`DEMO_DAILY_COST`（1日分の想定消化額）と `DEMO_MONTH_TO_DATE_COST`（月間累計の想定消化額）を環境変数で上書きすると、CLIの `run --dry-run` で生成される予測値を簡単に調整可能。
+
+### デモトランスポートでのドライラン手順
+
+1. `.env` に最低限のGoogle Ads認証情報とSlack Webhookを設定し、`GOOGLE_ADS_TRANSPORT="google_ads_alert.transports.demo:build_transport"` を追加する。任意で `DEMO_DAILY_COST` / `DEMO_MONTH_TO_DATE_COST` を上書きして想定消化額を調整する。
+2. タイムゾーンを日本時間で検証したい場合は `GOOGLE_ADS_TIMEZONE` と `ALERT_TIMEZONE` に `Asia/Tokyo` を指定する。
+3. 次のコマンドを実行して、Slack送信を行わずにペイロード内容を確認する。
+
+   ```bash
+   python -m google_ads_alert run --dry-run --transport google_ads_alert.transports.demo:build_transport
+   ```
+
+4. 生成された出力には、日次・月次の想定消化額とSlackへ送信されるJSONペイロードが含まれる。値を調整して、ダッシュボードや通知テンプレートの見え方をローカルで素早く検証できる。
 
 ## 運用前チェックリスト
 - [ ] すべての認証情報が最新で、期限切れではないことを確認した。

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+
+import pytest
 from zoneinfo import ZoneInfo
 
 from google_ads_alert.cli import (
@@ -235,6 +237,35 @@ def test_run_once_dry_run(monkeypatch) -> None:
     assert result.dry_run
     assert not result.delivered
     assert result.snapshot.as_of == as_of
+    assert result.payload["blocks"]
+
+
+def test_run_once_with_demo_transport() -> None:
+    env = {
+        **MIN_ENV,
+        "GOOGLE_ADS_TRANSPORT": "google_ads_alert.transports.demo:build_transport",
+        "GOOGLE_ADS_TIMEZONE": "Asia/Tokyo",
+        "ALERT_TIMEZONE": "Asia/Tokyo",
+        "DEMO_DAILY_COST": "1234.5",
+        "DEMO_MONTH_TO_DATE_COST": "67890.0",
+        "DAILY_BUDGET": "200000",
+        "MONTHLY_BUDGET": "5000000",
+    }
+
+    reference = datetime(2024, 6, 15, 12, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    result = run_once(
+        None,
+        base_env=env,
+        dry_run=True,
+        reference_time=reference,
+    )
+
+    assert result.dry_run
+    assert not result.delivered
+    assert result.snapshot.as_of == reference
+    assert result.snapshot.daily_cost.total_cost == pytest.approx(1234.5)
+    assert result.snapshot.month_to_date_cost.total_cost == pytest.approx(67890.0)
     assert result.payload["blocks"]
 
 

@@ -43,6 +43,11 @@ Google Ads APIの費用データを安全に取得し、Slackなどの通知チ�
 4. **複数チャンネル対応**
    - 本番・検証環境で異なるWebhookを発行し、環境変数で切り替える運用にする。
 
+### Slack通知オプション
+- `SLACK_INCLUDE_SPEND_RATE`: 日次ブロックに「1時間あたりの消化」フィールドを表示するかどうかを制御するブール値。
+- `SLACK_INCLUDE_AVERAGE_DAILY_SPEND`: 月次ブロックに平均日次消化額を表示するかどうかを制御するブール値。
+  - どちらも `true` / `false` / `yes` / `no` などの一般的な真偽値文字列を受け付け、無効な値を設定すると起動時にエラーとなる。
+
 ## 秘匿化と設定管理ポリシー
 - **.envファイル**: ローカル開発では `.env` に資格情報を保存し、`.gitignore` で除外する。
 - **環境変数**: 本番環境では `GOOGLE_ADS_DEVELOPER_TOKEN`、`GOOGLE_ADS_CLIENT_ID` など明確なキー名を付与。
@@ -58,6 +63,8 @@ GOOGLE_ADS_REFRESH_TOKEN="xxxx"
 GOOGLE_ADS_LOGIN_CUSTOMER_ID="123-456-7890"
 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 SLACK_FALLBACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+SLACK_INCLUDE_SPEND_RATE="false"
+SLACK_INCLUDE_AVERAGE_DAILY_SPEND="false"
 ```
 
 `.env` として保存した後、Pythonコードからは `google_ads_alert.config.load_config_from_env_file` を呼び出すことで、環境変数とマージした

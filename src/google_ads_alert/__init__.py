@@ -38,6 +38,7 @@ from .schedule import (
     generate_daily_schedule,
 )
 from .notification import SlackNotificationOptions, build_slack_notification_payload
+from .logging_utils import LoggingConfig, configure_logging, get_logger
 
 __all__ = [
     "ApplicationConfig",
@@ -71,4 +72,7 @@ __all__ = [
     "generate_daily_schedule",
     "SlackNotificationOptions",
     "build_slack_notification_payload",
+    "LoggingConfig",
+    "configure_logging",
+    "get_logger",
 ]

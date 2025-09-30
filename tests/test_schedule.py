@@ -90,3 +90,11 @@ def test_generate_schedule_invalid_minutes_raise_error():
         generate_daily_schedule(
             date(2024, 1, 5), DailyScheduleConfig(end_minute=60)
         )
+
+
+def test_generate_schedule_non_positive_run_count_is_rejected():
+    for invalid in (0, -2):
+        with pytest.raises(ValueError):
+            generate_daily_schedule(
+                date(2024, 1, 5), DailyScheduleConfig(run_count=invalid)
+            )

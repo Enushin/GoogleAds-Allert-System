@@ -77,15 +77,19 @@ def generate_daily_schedule(
     The generated schedule always includes the start and end anchors. When
     ``run_count`` is one the result consists of the start hour only. For
     higher counts the remaining entries are evenly spaced between the
-    anchors (hour and minute precision).
+    anchors (hour and minute precision). ``run_count`` must be a positive
+    integer, otherwise a :class:`ValueError` is raised.
     """
 
     cfg = config or DailyScheduleConfig()
+    if cfg.run_count <= 0:
+        raise ValueError("run_count must be a positive integer")
+
     tz = _coerce_timezone(cfg.timezone)
     start_dt = _build_anchor_datetime(
         target_date, cfg.start_hour, cfg.start_minute, tz
     )
-    if cfg.run_count <= 1:
+    if cfg.run_count == 1:
         return [start_dt]
 
     end_dt = _build_anchor_datetime(

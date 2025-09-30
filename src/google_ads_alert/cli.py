@@ -11,10 +11,10 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Protocol, Sequence
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import ApplicationConfig, ConfigError, load_config, load_env_file
 from .google_ads_client import GoogleAdsCostService, GoogleAdsSearchTransport
@@ -27,6 +27,17 @@ from .workflow import (
     SlackPayload,
     build_forecast_snapshot,
     dispatch_slack_alert,
+)
+from .metrics import (
+    MetricsLoadError,
+    compute_grouped_sli_reports,
+    compute_sli_report,
+    filter_records_by_schedule,
+    grouped_sli_reports_to_dict,
+    load_alert_run_records_from_jsonl,
+    render_grouped_sli_reports,
+    render_sli_report,
+    sli_report_to_dict,
 )
 
 
@@ -365,6 +376,27 @@ def render_schedule_preview(preview: SchedulePreview) -> str:
             lines.append("  (no remaining runs)")
 
     return "\n".join(lines)
+
+
+def _parse_metrics_datetime(value: str | None, *, argument: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:  # pragma: no cover - depends on user input
+        raise ValueError(f"{argument} must be a valid ISO-8601 datetime") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _parse_metrics_timezone(value: str | None) -> ZoneInfo | None:
+    if value is None:
+        return None
+    try:
+        return ZoneInfo(value)
+    except ZoneInfoNotFoundError as exc:  # pragma: no cover - depends on system tz db
+        raise ValueError(f"--timezone must be a valid IANA timezone name (got '{value}')") from exc
 
 
 TransportFactory = Callable[[ApplicationConfig, Mapping[str, str]], GoogleAdsSearchTransport]
@@ -828,6 +860,47 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Python path to a sender factory (module:callable).",
     )
 
+    metrics_parser = subparsers.add_parser(
+        "metrics",
+        help="Compute SLI metrics from a run history JSONL file.",
+    )
+    metrics_parser.add_argument(
+        "source",
+        help="Path to a newline-delimited JSON file with run results.",
+    )
+    metrics_parser.add_argument(
+        "--start",
+        dest="start",
+        metavar="DATETIME",
+        help="Ignore records scheduled before this ISO-8601 datetime.",
+    )
+    metrics_parser.add_argument(
+        "--end",
+        dest="end",
+        metavar="DATETIME",
+        help="Ignore records scheduled after this ISO-8601 datetime.",
+    )
+    metrics_parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format for the computed metrics.",
+    )
+    metrics_parser.add_argument(
+        "--group-by",
+        dest="group_by",
+        choices=("overall", "day", "week", "month"),
+        default="overall",
+        help="Grouping strategy for the metrics output.",
+    )
+    metrics_parser.add_argument(
+        "--timezone",
+        dest="timezone",
+        default="Asia/Tokyo",
+        help="Timezone used for day/week/month grouping (IANA name).",
+    )
+
     return parser
 
 
@@ -912,6 +985,66 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Scheduler terminated: {exc}", file=sys.stderr)
             return 1
 
+        return 0
+
+    if args.command == "metrics":
+        try:
+            start = _parse_metrics_datetime(args.start, argument="--start")
+            end = _parse_metrics_datetime(args.end, argument="--end")
+        except ValueError as exc:
+            _LOG.error("Metrics option parsing failed: %s", exc)
+            print(f"Invalid metrics option: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            grouping_timezone = _parse_metrics_timezone(args.timezone)
+        except ValueError as exc:
+            _LOG.error("Metrics option parsing failed: %s", exc)
+            print(f"Invalid metrics option: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            records = load_alert_run_records_from_jsonl(args.source)
+            filtered = filter_records_by_schedule(records, start=start, end=end)
+        except MetricsLoadError as exc:
+            _LOG.error("Metrics computation failed: %s", exc)
+            print(f"Failed to load metrics: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            _LOG.error("Metrics computation failed: %s", exc)
+            print(f"Failed to compute metrics: {exc}", file=sys.stderr)
+            return 1
+
+        grouped_reports = compute_grouped_sli_reports(
+            filtered,
+            group_by=args.group_by,
+            grouping_timezone=grouping_timezone,
+        )
+
+        if args.output_format == "json":
+            if args.group_by == "overall":
+                payload = sli_report_to_dict(grouped_reports[0].report if grouped_reports else compute_sli_report(filtered))
+            else:
+                payload = grouped_sli_reports_to_dict(
+                    grouped_reports,
+                    group_by=args.group_by,
+                    timezone_label=args.timezone,
+                )
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if args.group_by == "overall":
+                if grouped_reports:
+                    print(render_sli_report(grouped_reports[0].report))
+                else:
+                    print(render_sli_report(compute_sli_report(filtered)))
+            else:
+                print(
+                    render_grouped_sli_reports(
+                        grouped_reports,
+                        group_by=args.group_by,
+                        timezone_label=args.timezone,
+                    )
+                )
         return 0
 
     _LOG.warning("No command provided; displaying help")

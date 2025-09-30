@@ -52,6 +52,16 @@ from .workflow import (
 )
 from .logging_utils import LoggingConfig, configure_logging, get_logger
 from .transports import DemoTransport
+from .metrics import (
+    AlertRunRecord,
+    AlertRunStatus,
+    MetricsLoadError,
+    SliMeasurement,
+    SliReport,
+    compute_sli_report,
+    load_alert_run_records_from_jsonl,
+    render_sli_report,
+)
 from .cli import (
     DoctorCheck,
     DoctorReport,
@@ -119,6 +129,14 @@ __all__ = [
     "configure_logging",
     "get_logger",
     "DemoTransport",
+    "AlertRunRecord",
+    "AlertRunStatus",
+    "MetricsLoadError",
+    "SliMeasurement",
+    "SliReport",
+    "compute_sli_report",
+    "load_alert_run_records_from_jsonl",
+    "render_sli_report",
     "DoctorCheck",
     "DoctorReport",
     "SchedulePreview",

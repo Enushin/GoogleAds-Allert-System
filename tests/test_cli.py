@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -31,6 +32,7 @@ from google_ads_alert.forecast import (
     MonthlyPaceResult,
 )
 from google_ads_alert.google_ads_client import DailyCostSummary, MonthToDateCostSummary
+from google_ads_alert.metrics import MetricsLoadError
 from google_ads_alert.workflow import ForecastSnapshot
 
 
@@ -493,3 +495,364 @@ def test_main_serve_uses_scheduler(monkeypatch, capsys) -> None:
     assert stub.started
     output = capsys.readouterr().out
     assert "Scheduler started" in output
+
+
+def test_main_metrics_command(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T14:00:00+09:00",
+                        "status": "failure",
+                        "forecast_success": False,
+                        "data_fresh": False,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["metrics", str(history)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "SLI report" in captured.out
+    assert "Notification delivery" in captured.out
+
+
+def test_main_metrics_command_supports_filters_and_json(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T14:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--start",
+            "2024-05-01T12:00:00+09:00",
+            "--end",
+            "2024-05-01T23:59:00+09:00",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["total_records"] == 1
+    assert payload["measurements"][0]["numerator"] == 1
+
+
+def test_main_metrics_command_supports_day_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-02T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "day",
+            "--timezone",
+            "Asia/Tokyo",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "grouped by day" in captured.out
+    assert "Date: 2024-05-02" in captured.out
+
+
+def test_main_metrics_command_supports_week_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-08T08:00:00+09:00",
+                        "status": "success",
+                        "forecast_success": True,
+                        "data_fresh": True,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "week",
+            "--timezone",
+            "Asia/Tokyo",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "grouped by week" in captured.out
+    assert "Week: 2024-W18" in captured.out
+
+
+def test_main_metrics_command_supports_month_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-04-30T23:00:00+00:00",
+                        "status": "success",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scheduled_for": "2024-05-01T08:00:00+09:00",
+                        "status": "failure",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "month",
+            "--timezone",
+            "Asia/Tokyo",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "grouped by month" in captured.out
+    assert "Month: 2024-05" in captured.out
+
+
+def test_main_metrics_command_outputs_json_for_day_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        json.dumps(
+            {
+                "scheduled_for": "2024-05-01T08:00:00+09:00",
+                "status": "success",
+                "forecast_success": True,
+                "data_fresh": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "day",
+            "--timezone",
+            "Asia/Tokyo",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["group_by"] == "day"
+    assert payload["groups"][0]["report"]["total_records"] == 1
+
+
+def test_main_metrics_command_outputs_json_for_week_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        json.dumps(
+            {
+                "scheduled_for": "2024-05-01T08:00:00+09:00",
+                "status": "success",
+                "forecast_success": True,
+                "data_fresh": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "week",
+            "--timezone",
+            "Asia/Tokyo",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["group_by"] == "week"
+    assert payload["groups"][0]["report"]["total_records"] == 1
+
+
+def test_main_metrics_command_outputs_json_for_month_grouping(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        json.dumps(
+            {
+                "scheduled_for": "2024-05-01T08:00:00+09:00",
+                "status": "success",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--group-by",
+            "month",
+            "--timezone",
+            "Asia/Tokyo",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["group_by"] == "month"
+    assert payload["groups"][0]["report"]["total_records"] == 1
+
+
+def test_main_metrics_command_reports_invalid_datetime(capsys) -> None:
+    exit_code = main([
+        "metrics",
+        "history.jsonl",
+        "--start",
+        "invalid",
+    ])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Invalid metrics option" in captured.err
+
+
+def test_main_metrics_command_reports_invalid_range(tmp_path, capsys) -> None:
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        json.dumps(
+            {
+                "scheduled_for": "2024-05-01T08:00:00+09:00",
+                "status": "success",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "metrics",
+            str(history),
+            "--start",
+            "2024-05-02T00:00:00+09:00",
+            "--end",
+            "2024-05-01T00:00:00+09:00",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Failed to compute metrics" in captured.err
+
+
+def test_main_metrics_reports_errors(monkeypatch, capsys) -> None:
+    def fake_loader(path):
+        raise MetricsLoadError("bad data")
+
+    monkeypatch.setattr(
+        "google_ads_alert.cli.load_alert_run_records_from_jsonl", fake_loader
+    )
+
+    exit_code = main(["metrics", "history.jsonl"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Failed to load metrics" in captured.err

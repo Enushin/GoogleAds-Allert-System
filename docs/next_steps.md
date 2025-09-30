@@ -63,7 +63,12 @@ language: "ja"
 - [x] インシデントレビューのテンプレートを用意し、必要最小限の振り返り手順を整理する。（詳細: [インシデントレビュー記録テンプレート](incident_review_template.md)）
 
 ### 今後の検討（MVP後）
-- [ ] SLI計測の自動化やダッシュボード連携（BigQuery / Looker Studio等）を整備する。
+- [x] SLI計測の自動化やダッシュボード連携（BigQuery / Looker Studio等）を整備する。
+    - `python -m google_ads_alert metrics <history.jsonl>` コマンドで、Slack通知や予測処理成功率などのSLIを即時集計できるようになった。
+    - `--start` / `--end` で解析対象期間を限定し、`--format json` でレビュー資料に貼り付けやすいJSONを取得するシンプルな運用を想定する。
+    - `--group-by day --timezone Asia/Tokyo` を利用すると、日本時間基準で日次のSLIレポートを自動生成でき、手動での仕分け作業が不要になる。
+    - 週単位の傾向把握が必要な場合は `--group-by week` を指定し、ISO週ごとの成績をそのままレビュー資料に転記できる。
+    - 月次レビューには `--group-by month` を指定し、タイムゾーンを揃えたうえで月単位の達成率を一覧化すれば、定例報告用の資料作成を省力化できる。
 - [ ] 定期的なSLOレビュー会議と報告テンプレートを設計する。
 
 ## 6. 拡張検討

@@ -51,6 +51,7 @@ from .workflow import (
     dispatch_slack_alert,
 )
 from .logging_utils import LoggingConfig, configure_logging, get_logger
+from .transports import DemoTransport
 from .cli import (
     DoctorCheck,
     DoctorReport,
@@ -114,6 +115,7 @@ __all__ = [
     "LoggingConfig",
     "configure_logging",
     "get_logger",
+    "DemoTransport",
     "DoctorCheck",
     "DoctorReport",
     "SchedulePreview",

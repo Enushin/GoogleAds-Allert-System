@@ -86,3 +86,22 @@ def test_build_slack_payload_formats_budget_gaps_with_signs():
     monthly_fields = [field["text"] for field in payload["blocks"][3]["fields"]]
     assert any("差分 -¥200,000" in text for text in monthly_fields)
 
+
+def test_build_slack_payload_optionally_includes_spend_rate_field():
+    params = CombinedForecastInput(
+        as_of=datetime(2024, 4, 15, 12, 0, tzinfo=TOKYO),
+        current_spend=48000.0,
+        month_to_date_spend=1000000.0,
+        daily_budget=100000.0,
+    )
+    forecast = build_combined_forecast(params)
+
+    payload = build_slack_notification_payload(
+        forecast,
+        SlackNotificationOptions(include_spend_rate=True),
+    )
+
+    daily_fields = [field["text"] for field in payload["blocks"][2]["fields"]]
+    assert any("1時間あたりの消化" in text for text in daily_fields)
+    assert any("¥4,000/時" in text for text in daily_fields)
+

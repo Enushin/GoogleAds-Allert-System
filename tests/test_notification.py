@@ -104,4 +104,46 @@ def test_build_slack_payload_optionally_includes_spend_rate_field():
     daily_fields = [field["text"] for field in payload["blocks"][2]["fields"]]
     assert any("1時間あたりの消化" in text for text in daily_fields)
     assert any("¥4,000/時" in text for text in daily_fields)
+    assert "1時間あたりの消化:" in payload["text"]
+    assert "¥4,000/時" in payload["text"]
+
+
+def test_build_slack_payload_includes_average_daily_spend_field_when_enabled():
+    params = CombinedForecastInput(
+        as_of=datetime(2024, 4, 20, 18, 0, tzinfo=TOKYO),
+        current_spend=125000.0,
+        month_to_date_spend=2500000.0,
+        daily_budget=200000.0,
+        monthly_budget=6000000.0,
+    )
+    forecast = build_combined_forecast(params)
+
+    payload = build_slack_notification_payload(
+        forecast,
+        SlackNotificationOptions(include_average_daily_spend=True),
+    )
+
+    monthly_fields = [field["text"] for field in payload["blocks"][3]["fields"]]
+    assert any("平均日次消化" in text for text in monthly_fields)
+    assert any("/日" in text for text in monthly_fields)
+    assert "平均日次消化:" in payload["text"]
+    assert "/日" in payload["text"]
+
+
+def test_fallback_includes_spend_rate_message_when_unavailable():
+    params = CombinedForecastInput(
+        as_of=datetime(2024, 4, 15, 0, 0, tzinfo=TOKYO),
+        current_spend=0.0,
+        month_to_date_spend=0.0,
+        daily_budget=100000.0,
+        monthly_budget=3000000.0,
+    )
+    forecast = build_combined_forecast(params)
+
+    payload = build_slack_notification_payload(
+        forecast,
+        SlackNotificationOptions(include_spend_rate=True),
+    )
+
+    assert "1時間あたりの消化: 計算可能なデータが不足しています" in payload["text"]
 

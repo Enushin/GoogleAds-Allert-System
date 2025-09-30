@@ -76,6 +76,12 @@ from google_ads_alert.config import load_config_from_env_file
 config = load_config_from_env_file(".env")
 ```
 
+## CLI実行時の注意点
+- 実データでアラートを送信する場合は `python -m google_ads_alert run` を利用できる。`--dry-run` を指定するとSlackへの送信を行わずにペイロードのみを表示する。
+- Google Ads APIへの問い合わせには `GoogleAdsSearchTransport` 実装が必要であり、環境変数 `GOOGLE_ADS_TRANSPORT` に `module:callable` 形式でファクトリ関数を指定する。例: `GOOGLE_ADS_TRANSPORT="my_project.transports:build_transport"`。
+- 既存のSlack Webhook以外の送信方法を利用したい場合は、`SLACK_SENDER_FACTORY` にカスタム送信ファクトリを指定するとCLIから差し替えられる。
+- これらのファクトリは `(config: ApplicationConfig, env: Mapping[str, str]) -> Transport/Sender` 形式で実装し、`.env` と同じ値を参照できるようにしておく。
+
 ## 運用前チェックリスト
 - [ ] すべての認証情報が最新で、期限切れではないことを確認した。
 - [ ] テスト用アカウントでAPI呼び出しが成功することを確認した。

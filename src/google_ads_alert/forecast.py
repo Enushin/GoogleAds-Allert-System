@@ -78,6 +78,8 @@ class CombinedForecastResult:
     monthly: MonthlyPaceResult
     daily_budget_gap: Optional[float]
     monthly_budget_gap: Optional[float]
+    daily_budget: Optional[float]
+    monthly_budget: Optional[float]
 
 
 def _coerce_timezone(tz: ZoneInfo | None) -> ZoneInfo:
@@ -215,5 +217,7 @@ def build_combined_forecast(params: CombinedForecastInput) -> CombinedForecastRe
         monthly=monthly,
         daily_budget_gap=daily_gap,
         monthly_budget_gap=monthly_gap,
+        daily_budget=params.daily_budget,
+        monthly_budget=params.monthly_budget,
     )
 

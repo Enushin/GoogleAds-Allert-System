@@ -9,18 +9,18 @@ from google_ads_alert.schedule import DailyScheduleConfig, generate_daily_schedu
 TOKYO = ZoneInfo("Asia/Tokyo")
 
 
-def test_generate_schedule_default_config_produces_six_runs():
+def test_generate_schedule_default_config_produces_three_runs():
     schedule = generate_daily_schedule(date(2024, 1, 5))
 
-    assert len(schedule) == 6
-    assert schedule[0].hour == 9
-    assert schedule[-1].hour == 23
-    # evenly spaced between 9 and 23 => 14 hours total / 5 intervals = 2.8 hours
+    assert len(schedule) == 3
+    assert schedule[0].hour == 8
+    assert schedule[-1].hour == 20
+    # evenly spaced between 8 and 20 => 12 hours total / 2 intervals = 6 hours
     deltas = [
-        (schedule[i + 1] - schedule[i]).total_seconds() / 3600 for i in range(5)
+        (schedule[i + 1] - schedule[i]).total_seconds() / 3600 for i in range(2)
     ]
     for delta in deltas:
-        assert pytest.approx(delta, rel=1e-6) == 2.8
+        assert pytest.approx(delta, rel=1e-6) == 6
 
 
 def test_generate_schedule_respects_custom_timezone():

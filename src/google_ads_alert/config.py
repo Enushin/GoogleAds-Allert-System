@@ -142,6 +142,10 @@ def load_slack_config(env: Mapping[str, str] | None = None) -> SlackConfig:
             values.get("SLACK_INCLUDE_SPEND_RATE"),
             default=SlackNotificationOptions.__dataclass_fields__["include_spend_rate"].default,
         ),
+        include_average_daily_spend=_parse_bool(
+            values.get("SLACK_INCLUDE_AVERAGE_DAILY_SPEND"),
+            default=SlackNotificationOptions.__dataclass_fields__["include_average_daily_spend"].default,
+        ),
     )
 
     return SlackConfig(webhook_url=webhook_url, options=options)

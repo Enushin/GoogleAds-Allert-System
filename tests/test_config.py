@@ -64,6 +64,7 @@ def test_load_slack_config_defaults_and_overrides() -> None:
         "SLACK_TIMEZONE": "UTC",
         "SLACK_INCLUDE_MONTHLY_SECTION": "false",
         "SLACK_INCLUDE_SPEND_RATE": "yes",
+        "SLACK_INCLUDE_AVERAGE_DAILY_SPEND": "true",
     }
 
     config = load_slack_config(env)
@@ -75,6 +76,7 @@ def test_load_slack_config_defaults_and_overrides() -> None:
     assert config.options.timezone == ZoneInfo("UTC")
     assert config.options.include_monthly_section is False
     assert config.options.include_spend_rate is True
+    assert config.options.include_average_daily_spend is True
 
 
 def test_load_schedule_config_with_overrides() -> None:
@@ -104,6 +106,7 @@ def test_load_config_aggregates_sections() -> None:
         "ALERT_TIMEZONE": "UTC",
         "ALERT_RUN_COUNT": "1",
         "SLACK_INCLUDE_SPEND_RATE": "true",
+        "SLACK_INCLUDE_AVERAGE_DAILY_SPEND": "true",
         "DAILY_BUDGET": "50000.5",
         "MONTHLY_BUDGET": "1000000",
     }
@@ -113,13 +116,18 @@ def test_load_config_aggregates_sections() -> None:
     assert isinstance(config, ApplicationConfig)
     assert config.google_ads.timezone == ZoneInfo("UTC")
     assert config.slack.options.include_spend_rate is True
+    assert config.slack.options.include_average_daily_spend is True
     assert config.schedule.run_count == 1
     assert config.daily_budget == pytest.approx(50000.5)
     assert config.monthly_budget == pytest.approx(1_000_000)
 
 
-def test_load_slack_config_invalid_boolean_raises() -> None:
-    env = _base_env() | {"SLACK_INCLUDE_SPEND_RATE": "maybe"}
+@pytest.mark.parametrize(
+    "key",
+    ["SLACK_INCLUDE_SPEND_RATE", "SLACK_INCLUDE_AVERAGE_DAILY_SPEND"],
+)
+def test_load_slack_config_invalid_boolean_raises(key: str) -> None:
+    env = _base_env() | {key: "maybe"}
 
     with pytest.raises(ConfigError):
         load_slack_config(env)

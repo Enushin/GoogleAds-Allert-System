@@ -11,6 +11,16 @@ from .forecast import (
     calculate_monthly_pace,
     build_combined_forecast,
 )
+from .google_ads_client import (
+    DailyCostSummary,
+    GoogleAdsClientConfig,
+    GoogleAdsCostService,
+    GoogleAdsCredentials,
+    GoogleAdsSearchTransport,
+    QueryRange,
+    build_cost_query,
+    build_daily_query_range,
+)
 from .schedule import (
     DailyScheduleConfig,
     find_next_run_datetime,
@@ -28,6 +38,14 @@ __all__ = [
     "calculate_daily_projection",
     "calculate_monthly_pace",
     "build_combined_forecast",
+    "DailyCostSummary",
+    "GoogleAdsClientConfig",
+    "GoogleAdsCostService",
+    "GoogleAdsCredentials",
+    "GoogleAdsSearchTransport",
+    "QueryRange",
+    "build_cost_query",
+    "build_daily_query_range",
     "DailyScheduleConfig",
     "find_next_run_datetime",
     "generate_daily_schedule",

@@ -40,6 +40,17 @@ def test_daily_projection_no_elapsed_time_returns_none():
     assert result.spend_rate_per_hour is None
 
 
+def test_daily_projection_accepts_naive_datetime():
+    as_of = datetime(2024, 1, 15, 12, 0)  # naive datetime interpreted in Tokyo time
+    params = DailyForecastInput(as_of=as_of, current_spend=1200.0)
+
+    result = calculate_daily_projection(params)
+
+    assert result.as_of.tzinfo == TOKYO
+    # Half day elapsed -> double the spend
+    assert result.projected_spend == pytest.approx(2400.0)
+
+
 def test_monthly_pace_projects_full_month():
     as_of = datetime(2024, 1, 10, 9, 0, tzinfo=TOKYO)
     params = MonthlyPaceInput(
@@ -67,4 +78,14 @@ def test_monthly_pace_handles_december_transition():
     assert result.days_in_month == 31
     assert result.days_elapsed == 31
     assert result.projected_month_end_spend == pytest.approx(310000.0)
+
+
+def test_monthly_pace_accepts_naive_datetime():
+    as_of = datetime(2024, 2, 10, 9, 0)  # naive datetime assumed to be in Tokyo
+    params = MonthlyPaceInput(as_of=as_of, month_to_date_spend=100000.0)
+
+    result = calculate_monthly_pace(params)
+
+    assert result.as_of.tzinfo == TOKYO
+    assert result.days_elapsed == 10
 

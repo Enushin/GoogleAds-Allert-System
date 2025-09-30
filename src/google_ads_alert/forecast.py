@@ -62,11 +62,19 @@ def _coerce_timezone(tz: ZoneInfo | None) -> ZoneInfo:
     return tz or DEFAULT_TZ
 
 
-def _day_bounds(as_of: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
-    localized = as_of.astimezone(tz)
+def _localize_datetime(as_of: datetime, tz: ZoneInfo) -> datetime:
+    """Return ``as_of`` as a timezone-aware datetime in ``tz``."""
+
+    if as_of.tzinfo is None:
+        return as_of.replace(tzinfo=tz)
+    return as_of.astimezone(tz)
+
+
+def _day_bounds(as_of: datetime, tz: ZoneInfo) -> tuple[datetime, datetime, datetime]:
+    localized = _localize_datetime(as_of, tz)
     day_start = localized.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
-    return day_start, day_end
+    return day_start, day_end, localized
 
 
 def calculate_daily_projection(params: DailyForecastInput) -> DailyForecastResult:
@@ -79,8 +87,8 @@ def calculate_daily_projection(params: DailyForecastInput) -> DailyForecastResul
     """
 
     tz = _coerce_timezone(params.timezone)
-    day_start, day_end = _day_bounds(params.as_of, tz)
-    elapsed = params.as_of.astimezone(tz) - day_start
+    day_start, day_end, localized_as_of = _day_bounds(params.as_of, tz)
+    elapsed = localized_as_of - day_start
     day_duration = day_end - day_start
 
     projected_spend: Optional[float]
@@ -101,7 +109,7 @@ def calculate_daily_projection(params: DailyForecastInput) -> DailyForecastResul
         budget_utilization = params.current_spend / params.daily_budget
 
     return DailyForecastResult(
-        as_of=params.as_of.astimezone(tz),
+        as_of=localized_as_of,
         current_spend=params.current_spend,
         elapsed=elapsed,
         day_duration=day_duration,
@@ -115,7 +123,7 @@ def calculate_monthly_pace(params: MonthlyPaceInput) -> MonthlyPaceResult:
     """Compute the projected spend for the month based on current pace."""
 
     tz = _coerce_timezone(params.timezone)
-    localized = params.as_of.astimezone(tz)
+    localized = _localize_datetime(params.as_of, tz)
     first_of_month = localized.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if localized.month == 12:
         next_month = localized.replace(year=localized.year + 1, month=1, day=1)

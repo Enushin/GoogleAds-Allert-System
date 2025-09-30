@@ -1,5 +1,14 @@
 """Core package for Google Ads budget alert system."""
 
+from .config import (
+    ApplicationConfig,
+    ConfigError,
+    SlackConfig,
+    load_config,
+    load_google_ads_config,
+    load_schedule_config,
+    load_slack_config,
+)
 from .forecast import (
     DailyForecastInput,
     DailyForecastResult,
@@ -29,6 +38,13 @@ from .schedule import (
 from .notification import SlackNotificationOptions, build_slack_notification_payload
 
 __all__ = [
+    "ApplicationConfig",
+    "ConfigError",
+    "SlackConfig",
+    "load_config",
+    "load_google_ads_config",
+    "load_schedule_config",
+    "load_slack_config",
     "DailyForecastInput",
     "DailyForecastResult",
     "CombinedForecastInput",

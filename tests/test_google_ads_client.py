@@ -9,10 +9,13 @@ from google_ads_alert.google_ads_client import (
     GoogleAdsClientConfig,
     GoogleAdsCostService,
     GoogleAdsCredentials,
+    RetryConfig,
     QueryRange,
     build_cost_query,
     build_daily_query_range,
 )
+
+import pytest
 
 
 class DummyTransport:
@@ -80,4 +83,72 @@ def test_cost_service_aggregates_rows_and_converts_timezone() -> None:
     customer_id, query = transport.requests[0]
     assert customer_id == "123-456-7890"
     assert "segments.date" in query
+
+
+class FlakyTransport:
+    def __init__(self, responses: list[list[dict] | Exception]) -> None:
+        self._responses = responses
+        self.calls: int = 0
+
+    def search(self, customer_id: str, query: str):
+        self.calls += 1
+        response = self._responses[self.calls - 1]
+        if isinstance(response, Exception):
+            raise response
+        return iter(response)
+
+
+def test_cost_service_retries_and_eventually_succeeds() -> None:
+    tz = ZoneInfo("Asia/Tokyo")
+    credentials = GoogleAdsCredentials(
+        developer_token="dev",
+        client_id="client",
+        client_secret="secret",
+        refresh_token="refresh",
+    )
+    config = GoogleAdsClientConfig(customer_id="123", credentials=credentials, timezone=tz)
+
+    transport = FlakyTransport(
+        [RuntimeError("transient"), [{"metrics": {"cost_micros": "500000"}}]]
+    )
+    sleeps: list[float] = []
+
+    service = GoogleAdsCostService(
+        config,
+        transport,
+        retry_config=RetryConfig(max_attempts=3, initial_backoff_seconds=0.25, backoff_multiplier=1),
+        sleep=sleeps.append,
+    )
+
+    summary = service.fetch_daily_cost(datetime(2024, 1, 10, 12, 0))
+
+    assert summary.total_cost_micros == 500000
+    assert transport.calls == 2
+    assert sleeps == [0.25]
+
+
+def test_cost_service_raises_after_retry_exhaustion() -> None:
+    tz = ZoneInfo("Asia/Tokyo")
+    credentials = GoogleAdsCredentials(
+        developer_token="dev",
+        client_id="client",
+        client_secret="secret",
+        refresh_token="refresh",
+    )
+    config = GoogleAdsClientConfig(customer_id="123", credentials=credentials, timezone=tz)
+    transport = FlakyTransport([RuntimeError("err"), RuntimeError("err")])
+    sleeps: list[float] = []
+
+    service = GoogleAdsCostService(
+        config,
+        transport,
+        retry_config=RetryConfig(max_attempts=2, initial_backoff_seconds=0.1, backoff_multiplier=1),
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(RuntimeError):
+        service.fetch_daily_cost(datetime(2024, 1, 10, 12, 0))
+
+    assert transport.calls == 2
+    assert sleeps == [0.1]
 

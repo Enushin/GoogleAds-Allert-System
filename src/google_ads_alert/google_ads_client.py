@@ -10,9 +10,10 @@ dependency on ``google-ads``.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from zoneinfo import ZoneInfo
 
@@ -46,6 +47,31 @@ class GoogleAdsClientConfig:
     credentials: GoogleAdsCredentials
     timezone: ZoneInfo | None = None
     endpoint: str = "https://googleads.googleapis.com"
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """Behavioral controls for retrying failed Google Ads API calls."""
+
+    max_attempts: int = 3
+    initial_backoff_seconds: float = 1.0
+    backoff_multiplier: float = 2.0
+    retryable_exceptions: tuple[type[BaseException], ...] = (Exception,)
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if self.initial_backoff_seconds < 0:
+            raise ValueError("initial_backoff_seconds must be non-negative")
+        if self.backoff_multiplier < 1:
+            raise ValueError("backoff_multiplier must be at least 1")
+        if not self.retryable_exceptions:
+            raise ValueError("retryable_exceptions must not be empty")
+
+    def is_retryable(self, error: BaseException) -> bool:
+        """Return ``True`` when ``error`` should trigger another attempt."""
+
+        return isinstance(error, self.retryable_exceptions)
 
 
 @dataclass(frozen=True)
@@ -131,9 +157,13 @@ class GoogleAdsCostService:
         self,
         config: GoogleAdsClientConfig,
         transport: GoogleAdsSearchTransport,
+        retry_config: RetryConfig | None = None,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self._config = config
         self._transport = transport
+        self._retry_config = retry_config or RetryConfig()
+        self._sleep = sleep or time.sleep
 
     def fetch_daily_cost(self, as_of: datetime) -> DailyCostSummary:
         """Retrieve and aggregate the spend for the day of ``as_of``."""
@@ -143,9 +173,30 @@ class GoogleAdsCostService:
         query_range = build_daily_query_range(localized_as_of, tz)
         query = build_cost_query(query_range)
 
-        total_micros = 0
-        for row in self._transport.search(self._config.customer_id, query):
-            total_micros += _extract_cost_micros(row)
+        attempt = 0
+        delay = self._retry_config.initial_backoff_seconds
+        last_error: Exception | None = None
+
+        while attempt < self._retry_config.max_attempts:
+            attempt += 1
+            try:
+                total_micros = 0
+                for row in self._transport.search(self._config.customer_id, query):
+                    total_micros += _extract_cost_micros(row)
+            except Exception as exc:
+                last_error = exc
+                if not self._retry_config.is_retryable(exc) or attempt >= self._retry_config.max_attempts:
+                    raise
+
+                if delay > 0:
+                    self._sleep(delay)
+                delay *= self._retry_config.backoff_multiplier
+                continue
+            else:
+                break
+
+        if last_error is not None and attempt >= self._retry_config.max_attempts:
+            raise last_error
 
         return DailyCostSummary(
             as_of=localized_as_of,
@@ -160,6 +211,7 @@ __all__ = [
     "GoogleAdsClientConfig",
     "GoogleAdsCostService",
     "GoogleAdsCredentials",
+    "RetryConfig",
     "GoogleAdsSearchTransport",
     "QueryRange",
     "build_cost_query",

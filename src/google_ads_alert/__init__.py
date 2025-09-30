@@ -65,8 +65,11 @@ from .cli import (
     run_schedule_preview,
     RunResult,
     RunError,
+    SchedulerProtocol,
+    SchedulerSetupError,
     render_run_result,
     run_once,
+    run_scheduler,
     generate_schedule_preview,
 )
 
@@ -128,7 +131,10 @@ __all__ = [
     "run_schedule_preview",
     "RunResult",
     "RunError",
+    "SchedulerProtocol",
+    "SchedulerSetupError",
     "render_run_result",
     "run_once",
+    "run_scheduler",
     "generate_schedule_preview",
 ]

@@ -27,15 +27,14 @@ class DailyScheduleConfig:
         Last hour (0-23) allowed for execution. When multiple runs are
         generated the final one will be aligned to ``end_hour``.
     run_count:
-        Desired number of executions per day. Defaults to six to provide a
-        slightly denser cadence than a typical four-run schedule while still
-        leaving reasonable spacing throughout the workday.
+        Desired number of executions per day. Defaults to three so alerts land
+        at 8:00, 14:00, and 20:00 in the Asia/Tokyo timezone.
     """
 
     timezone: ZoneInfo | None = None
-    start_hour: int = 9
-    end_hour: int = 23
-    run_count: int = 6
+    start_hour: int = 8
+    end_hour: int = 20
+    run_count: int = 3
 
 
 def _validate_hour(hour: int) -> None:

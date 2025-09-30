@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import logging
 import os
 import sys
 import urllib.error
@@ -12,12 +13,14 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
 from .config import ApplicationConfig, ConfigError, load_config, load_env_file
 from .google_ads_client import GoogleAdsCostService, GoogleAdsSearchTransport
 from .schedule import generate_daily_schedule, generate_upcoming_run_windows
+from .forecast import _coerce_timezone
+from .logging_utils import LoggingConfig, configure_logging
 from .workflow import (
     ForecastSnapshot,
     NotificationSender,
@@ -25,6 +28,9 @@ from .workflow import (
     build_forecast_snapshot,
     dispatch_slack_alert,
 )
+
+
+_LOG = logging.getLogger("google_ads_alert.cli")
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,36 @@ class SchedulePreview:
     windows: tuple[SchedulePreviewWindow, ...]
 
 
+def _configure_default_logging() -> None:
+    """Configure the package logger when no handlers are registered."""
+
+    base_logger = logging.getLogger("google_ads_alert")
+    if base_logger.handlers:
+        return
+
+    env = os.environ
+    level = env.get("GOOGLE_ADS_LOG_LEVEL") or logging.INFO
+
+    tz_name = env.get("GOOGLE_ADS_LOG_TIMEZONE")
+    timezone: ZoneInfo | None = None
+    if tz_name:
+        try:
+            timezone = ZoneInfo(tz_name)
+        except Exception:  # pragma: no cover - depends on system tz database
+            timezone = None
+
+    fmt = env.get("GOOGLE_ADS_LOG_FORMAT")
+    datefmt = env.get("GOOGLE_ADS_LOG_DATEFMT")
+
+    configure_logging(
+        LoggingConfig(
+            level=level,
+            timezone=timezone,
+            fmt=fmt or None,
+            datefmt=datefmt or None,
+        )
+    )
+
 def _load_application_config(
     env_path: str | Path | None,
     *,
@@ -75,19 +111,23 @@ def _load_application_config(
     base_values = dict(base_env or os.environ)
     if env_path is None:
         source_label = "environment variables"
+        _LOG.debug("Loading configuration from %s", source_label)
         try:
             config = load_config(base_values)
         except ConfigError as exc:
+            _LOG.exception("Configuration loading failed: %s", exc)
             raise ConfigError(f"Failed to load configuration: {exc}") from exc
         env_values: Mapping[str, str] = base_values
     else:
         path = Path(env_path)
         source_label = str(path)
+        _LOG.debug("Loading configuration from %s", source_label)
         file_values = load_env_file(path)
         merged = {**base_values, **file_values}
         try:
             config = load_config(merged)
         except ConfigError as exc:
+            _LOG.exception("Configuration loading failed: %s", exc)
             raise ConfigError(f"Failed to load configuration from {path}: {exc}") from exc
         env_values = merged
 
@@ -98,6 +138,7 @@ def _load_application_config(
             details=f"Configuration loaded from {source_label}",
         )
     )
+    _LOG.info("Configuration loaded from %s", source_label)
     return config, checks, env_values
 
 
@@ -196,15 +237,19 @@ def run_doctor(
 ) -> DoctorReport:
     """Execute configuration validations and return their outcome."""
 
+    _configure_default_logging()
+    _LOG.info("Running doctor checks", extra={"env_path": str(env_path) if env_path else None})
     try:
         config, checks, _ = _load_application_config(env_path, base_env=base_env)
     except ConfigError as exc:
+        _LOG.error("Doctor failed: %s", exc)
         return DoctorReport(checks=(), errors=(str(exc),))
 
     checks.append(_check_slack_webhook(config))
     checks.extend(_check_budgets(config))
     checks.append(_check_schedule(config))
 
+    _LOG.info("Doctor completed with %d check(s)", len(checks))
     return DoctorReport(checks=tuple(checks))
 
 
@@ -260,6 +305,10 @@ def generate_schedule_preview(
         raise ValueError("days must be greater than 0")
 
     now = reference_time or datetime.now()
+    _LOG.info(
+        "Generating schedule preview",
+        extra={"days": days, "reference_time": now.isoformat()},
+    )
     windows = tuple(
         SchedulePreviewWindow(window.date, tuple(window.run_times))
         for window in generate_upcoming_run_windows(now, days, config.schedule)
@@ -286,10 +335,13 @@ def run_schedule_preview(
 ) -> SchedulePreview:
     """Load configuration and return a schedule preview."""
 
+    _configure_default_logging()
     config, _, _ = _load_application_config(env_path, base_env=base_env)
-    return generate_schedule_preview(
+    preview = generate_schedule_preview(
         config, days=days, reference_time=reference_time
     )
+    _LOG.info("Schedule preview generated with %d window(s)", len(preview.windows))
+    return preview
 
 
 def render_schedule_preview(preview: SchedulePreview) -> str:
@@ -331,6 +383,34 @@ class RunResult:
 
 class RunError(RuntimeError):
     """Raised when an alert execution fails."""
+
+
+class SchedulerSetupError(RuntimeError):
+    """Raised when the recurring scheduler cannot be initialized."""
+
+
+class SchedulerProtocol(Protocol):
+    """Minimal protocol describing the scheduler interface used in this module."""
+
+    def add_job(
+        self,
+        func: Callable[..., object],
+        trigger: str,
+        *,
+        id: str,
+        replace_existing: bool,
+        **trigger_kwargs: object,
+    ) -> object:
+        ...  # pragma: no cover - protocol stub
+
+    def start(self) -> None:  # pragma: no cover - protocol stub
+        ...
+
+    def shutdown(self, wait: bool = True) -> None:  # pragma: no cover - optional
+        ...
+
+
+SchedulerFactory = Callable[[ZoneInfo], SchedulerProtocol]
 
 
 def _import_factory(spec: str, *, default_attr: str) -> Callable:
@@ -424,6 +504,15 @@ def run_once(
 ) -> RunResult:
     """Execute a single forecast + notification cycle."""
 
+    _configure_default_logging()
+    _LOG.info(
+        "Starting alert execution",
+        extra={
+            "dry_run": dry_run,
+            "transport_path": transport_path,
+            "sender_path": sender_path,
+        },
+    )
     config, _, env_values = _load_application_config(env_path, base_env=base_env)
 
     transport = _resolve_transport_factory(
@@ -439,9 +528,18 @@ def run_once(
         monthly_budget=config.monthly_budget,
         timezone_override=config.schedule.timezone,
     )
+    _LOG.info(
+        "Forecast snapshot built",
+        extra={
+            "as_of": snapshot.as_of.isoformat(),
+            "daily_spend": snapshot.daily_cost.total_cost,
+            "month_to_date": snapshot.month_to_date_cost.total_cost,
+        },
+    )
 
     delivered = False
     if dry_run:
+        _LOG.info("Dry run enabled; notification delivery skipped")
         sender = lambda payload: None  # type: ignore[assignment]
     else:
         sender = _resolve_sender_factory(
@@ -454,16 +552,169 @@ def run_once(
             snapshot, sender, options=config.slack.options
         )
     except RunError:
+        _LOG.exception("Alert dispatch failed")
         raise
     except Exception as exc:  # pragma: no cover - unexpected sender errors
+        _LOG.exception("Unexpected error during alert dispatch: %s", exc)
         raise RunError(str(exc)) from exc
 
+    _LOG.info(
+        "Alert execution completed",
+        extra={
+            "delivered": delivered,
+            "dry_run": dry_run,
+        },
+    )
     return RunResult(
         snapshot=snapshot,
         payload=payload,
         delivered=delivered,
         dry_run=dry_run,
     )
+
+
+def _build_scheduler_job(
+    env_path: str | Path | None,
+    *,
+    base_env: Mapping[str, str],
+    dry_run: bool,
+    transport_factory: TransportFactory | None,
+    sender_factory: SenderFactory | None,
+    transport_path: str | None,
+    sender_path: str | None,
+) -> Callable[[], RunResult]:
+    def _job() -> RunResult:
+        _LOG.info("Executing scheduled alert job")
+        result = run_once(
+            env_path,
+            base_env=base_env,
+            dry_run=dry_run,
+            transport_factory=transport_factory,
+            sender_factory=sender_factory,
+            transport_path=transport_path,
+            sender_path=sender_path,
+        )
+
+        if isinstance(result, RunResult):
+            _LOG.info(
+                "Scheduled alert job completed",
+                extra={"delivered": result.delivered, "dry_run": result.dry_run},
+            )
+        else:  # pragma: no cover - compatibility for test doubles
+            _LOG.info(
+                "Scheduled alert job completed without RunResult",
+                extra={"dry_run": dry_run},
+            )
+        return result
+
+    return _job
+
+
+def _prepare_scheduler(
+    tz: ZoneInfo, scheduler_factory: SchedulerFactory | None
+) -> SchedulerProtocol:
+    if scheduler_factory is not None:
+        scheduler = scheduler_factory(tz)
+        if scheduler is None:
+            raise SchedulerSetupError(
+                "scheduler_factory returned None; unable to configure scheduler"
+            )
+        return scheduler
+
+    try:
+        from apscheduler.schedulers.blocking import BlockingScheduler
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on environment
+        raise SchedulerSetupError(
+            "APScheduler is required to run the recurring scheduler. "
+            "Install 'APScheduler' or provide a custom scheduler_factory."
+        ) from exc
+
+    return BlockingScheduler(timezone=tz)
+
+
+def _register_daily_jobs(
+    scheduler: SchedulerProtocol,
+    config: ApplicationConfig,
+    tz: ZoneInfo,
+    job: Callable[[], RunResult],
+    *,
+    job_id_prefix: str = "daily-alert",
+) -> None:
+    schedule = generate_daily_schedule(date.today(), config.schedule)
+    seen_slots: set[tuple[int, int, int]] = set()
+    job_index = 0
+
+    for run_time in schedule:
+        localized = run_time
+        if localized.tzinfo is None:
+            localized = localized.replace(tzinfo=tz)
+        else:
+            localized = localized.astimezone(tz)
+
+        slot = (localized.hour, localized.minute, localized.second)
+        if slot in seen_slots:
+            continue
+        seen_slots.add(slot)
+
+        scheduler.add_job(
+            job,
+            trigger="cron",
+            id=f"{job_id_prefix}-{job_index}",
+            replace_existing=True,
+            hour=localized.hour,
+            minute=localized.minute,
+            second=localized.second,
+            timezone=tz,
+        )
+        _LOG.info(
+            "Registered daily alert job",
+            extra={
+                "hour": localized.hour,
+                "minute": localized.minute,
+                "second": localized.second,
+                "tz": getattr(tz, "key", str(tz)),
+            },
+        )
+        job_index += 1
+
+    _LOG.info("Total scheduled jobs: %d", job_index)
+
+
+def run_scheduler(
+    env_path: str | Path | None,
+    *,
+    base_env: Mapping[str, str] | None = None,
+    dry_run: bool = False,
+    scheduler_factory: SchedulerFactory | None = None,
+    transport_factory: TransportFactory | None = None,
+    sender_factory: SenderFactory | None = None,
+    transport_path: str | None = None,
+    sender_path: str | None = None,
+) -> SchedulerProtocol:
+    _configure_default_logging()
+    _LOG.info("Configuring scheduler", extra={"dry_run": dry_run})
+    config, _, env_values = _load_application_config(env_path, base_env=base_env)
+    tz = _coerce_timezone(config.schedule.timezone)
+
+    scheduler = _prepare_scheduler(tz, scheduler_factory)
+    remover = getattr(scheduler, "remove_all_jobs", None)
+    if callable(remover):
+        remover()
+        _LOG.debug("Existing scheduler jobs cleared")
+
+    job = _build_scheduler_job(
+        env_path,
+        base_env=dict(env_values),
+        dry_run=dry_run,
+        transport_factory=transport_factory,
+        sender_factory=sender_factory,
+        transport_path=transport_path,
+        sender_path=sender_path,
+    )
+
+    _register_daily_jobs(scheduler, config, tz, job)
+    _LOG.info("Scheduler configuration complete")
+    return scheduler
 
 
 def render_run_result(result: RunResult) -> str:
@@ -551,14 +802,42 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Python path to a sender factory (module:callable).",
     )
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start a blocking scheduler for recurring alert execution.",
+    )
+    serve_parser.add_argument(
+        "-e",
+        "--env-file",
+        dest="env_file",
+        help="Path to a .env file used for execution.",
+    )
+    serve_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute scheduled runs without dispatching to Slack.",
+    )
+    serve_parser.add_argument(
+        "--transport",
+        dest="transport",
+        help="Python path to a transport factory (module:callable).",
+    )
+    serve_parser.add_argument(
+        "--sender",
+        dest="sender",
+        help="Python path to a sender factory (module:callable).",
+    )
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point used by ``python -m google_ads_alert``."""
 
+    _configure_default_logging()
     parser = build_argument_parser()
     args = parser.parse_args(argv)
+    _LOG.info("CLI command invoked", extra={"command": args.command})
 
     if args.command == "doctor":
         report = run_doctor(args.env_file)
@@ -569,9 +848,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             preview = run_schedule_preview(args.env_file, days=args.days)
         except ConfigError as exc:
+            _LOG.error("Schedule preview failed: %s", exc)
             print(f"Failed to load configuration: {exc}", file=sys.stderr)
             return 1
         except ValueError as exc:
+            _LOG.error("Schedule preview failed: %s", exc)
             print(f"Invalid schedule options: {exc}", file=sys.stderr)
             return 1
 
@@ -587,15 +868,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sender_path=args.sender,
             )
         except ConfigError as exc:
+            _LOG.error("Single run failed: %s", exc)
             print(f"Failed to load configuration: {exc}", file=sys.stderr)
             return 1
         except RunError as exc:
+            _LOG.error("Single run failed: %s", exc)
             print(f"Run failed: {exc}", file=sys.stderr)
             return 1
 
         print(render_run_result(result))
         return 0
 
+    if args.command == "serve":
+        try:
+            scheduler = run_scheduler(
+                args.env_file,
+                dry_run=args.dry_run,
+                transport_path=args.transport,
+                sender_path=args.sender,
+            )
+        except ConfigError as exc:
+            _LOG.error("Scheduler startup failed: %s", exc)
+            print(f"Failed to load configuration: {exc}", file=sys.stderr)
+            return 1
+        except SchedulerSetupError as exc:
+            _LOG.error("Scheduler startup failed: %s", exc)
+            print(f"Failed to initialize scheduler: {exc}", file=sys.stderr)
+            return 1
+
+        print("Scheduler started. Press Ctrl+C to stop.")
+        _LOG.info("Scheduler started")
+
+        try:
+            scheduler.start()
+        except KeyboardInterrupt:
+            _LOG.warning("Scheduler interrupted by user")
+            shutdown = getattr(scheduler, "shutdown", None)
+            if callable(shutdown):
+                shutdown(wait=False)
+            return 0
+        except Exception as exc:  # pragma: no cover - scheduler runtime errors vary
+            _LOG.exception("Scheduler terminated due to error: %s", exc)
+            print(f"Scheduler terminated: {exc}", file=sys.stderr)
+            return 1
+
+        return 0
+
+    _LOG.warning("No command provided; displaying help")
     parser.print_help()
     return 1
 
@@ -614,6 +933,9 @@ __all__ = [
     "run_schedule_preview",
     "RunResult",
     "RunError",
+    "SchedulerProtocol",
+    "SchedulerSetupError",
     "render_run_result",
     "run_once",
+    "run_scheduler",
 ]

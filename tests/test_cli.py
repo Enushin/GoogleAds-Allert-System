@@ -12,6 +12,7 @@ from google_ads_alert.cli import (
     RunResult,
     SchedulePreview,
     SchedulePreviewWindow,
+    SchedulerSetupError,
     build_argument_parser,
     generate_schedule_preview,
     main,
@@ -21,6 +22,7 @@ from google_ads_alert.cli import (
     run_doctor,
     run_once,
     run_schedule_preview,
+    run_scheduler,
 )
 from google_ads_alert.config import ConfigError, load_config
 from google_ads_alert.forecast import (
@@ -394,3 +396,100 @@ def test_main_run_reports_errors(monkeypatch, capsys) -> None:
 
     assert exit_code == 1
     assert "failed" in capsys.readouterr().err
+
+
+def test_run_scheduler_registers_cron_jobs(monkeypatch) -> None:
+    env = {
+        **MIN_ENV,
+        "ALERT_TIMEZONE": "UTC",
+        "ALERT_START_HOUR": "8",
+        "ALERT_END_HOUR": "12",
+        "ALERT_RUN_COUNT": "2",
+    }
+
+    captured: list[dict[str, object]] = []
+
+    def fake_run_once(env_path, **kwargs):
+        captured.append({"env_path": env_path, **kwargs})
+        return None
+
+    monkeypatch.setattr("google_ads_alert.cli.run_once", fake_run_once)
+
+    class StubScheduler:
+        def __init__(self) -> None:
+            self.jobs: list[dict[str, object]] = []
+            self.removed = False
+
+        def add_job(self, func, trigger, **kwargs):
+            entry = {"func": func, "trigger": trigger, **kwargs}
+            self.jobs.append(entry)
+
+        def start(self) -> None:  # pragma: no cover - not used in this test
+            raise AssertionError("start should not be invoked")
+
+        def remove_all_jobs(self) -> None:
+            self.removed = True
+
+        def shutdown(self, wait: bool = True) -> None:  # pragma: no cover - optional
+            pass
+
+    stub = StubScheduler()
+
+    scheduler = run_scheduler(
+        None,
+        base_env=env,
+        dry_run=True,
+        scheduler_factory=lambda tz: stub,
+    )
+
+    assert scheduler is stub
+    assert stub.removed
+    assert len(stub.jobs) == 2
+    assert all(job["trigger"] == "cron" for job in stub.jobs)
+    assert {job["hour"] for job in stub.jobs} == {8, 12}
+    assert all(job["minute"] == 0 for job in stub.jobs)
+    assert all(job["second"] == 0 for job in stub.jobs)
+    assert all(job["timezone"] == ZoneInfo("UTC") for job in stub.jobs)
+
+    # Execute the first scheduled job and ensure run_once receives the expected arguments.
+    stub.jobs[0]["func"]()
+
+    assert captured
+    call = captured[0]
+    assert call["env_path"] is None
+    assert call["dry_run"] is True
+    assert "GOOGLE_ADS_CLIENT_ID" in call["base_env"]
+
+
+def test_run_scheduler_requires_apscheduler_when_missing() -> None:
+    env = dict(MIN_ENV)
+
+    with pytest.raises(SchedulerSetupError):
+        run_scheduler(None, base_env=env)
+
+
+def test_main_serve_uses_scheduler(monkeypatch, capsys) -> None:
+    class StubScheduler:
+        def __init__(self) -> None:
+            self.started = False
+
+        def start(self) -> None:
+            self.started = True
+
+        def shutdown(self, wait: bool = True) -> None:  # pragma: no cover - optional
+            self.started = False
+
+    stub = StubScheduler()
+
+    def fake_run_scheduler(env_path, **kwargs):
+        assert kwargs["dry_run"] is True
+        return stub
+
+    monkeypatch.setattr("google_ads_alert.cli.run_scheduler", fake_run_scheduler)
+
+    exit_code = main(["serve", "--dry-run"])
+
+    assert exit_code == 0
+    assert stub.started
+    output = capsys.readouterr().out
+    assert "Scheduler started" in output

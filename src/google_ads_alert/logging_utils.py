@@ -5,16 +5,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import IO
 from zoneinfo import ZoneInfo
 
 from .forecast import _coerce_timezone
+
+
+DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s %(message)s"
+DEFAULT_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S %Z"
 
 
 class _TimezoneAwareFormatter(logging.Formatter):
     """Formatter that renders timestamps in a specific timezone."""
 
     def __init__(self, timezone: ZoneInfo, fmt: str | None = None, datefmt: str | None = None) -> None:
-        default_fmt = fmt or "%(asctime)s %(levelname)s %(name)s %(message)s"
+        default_fmt = fmt or DEFAULT_LOG_FORMAT
         super().__init__(default_fmt, datefmt)
         self._timezone = timezone
 
@@ -22,7 +27,7 @@ class _TimezoneAwareFormatter(logging.Formatter):
         dt = datetime.fromtimestamp(record.created, self._timezone)
         if datefmt:
             return dt.strftime(datefmt)
-        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+        return dt.strftime(DEFAULT_LOG_DATEFMT)
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,7 @@ class LoggingConfig:
     timezone: ZoneInfo | None = None
     fmt: str | None = None
     datefmt: str | None = None
+    stream: IO[str] | None = None
 
 
 def _clear_handlers(logger: logging.Logger) -> None:
@@ -53,7 +59,7 @@ def configure_logging(config: LoggingConfig | None = None) -> logging.Logger:
 
     _clear_handlers(logger)
 
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler(cfg.stream)
     handler.setLevel(cfg.level)
     handler.setFormatter(
         _TimezoneAwareFormatter(

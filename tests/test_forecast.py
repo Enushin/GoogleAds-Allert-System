@@ -3,8 +3,10 @@ from datetime import datetime
 import pytest
 
 from google_ads_alert.forecast import (
+    CombinedForecastInput,
     DailyForecastInput,
     MonthlyPaceInput,
+    build_combined_forecast,
     calculate_daily_projection,
     calculate_monthly_pace,
 )
@@ -88,4 +90,37 @@ def test_monthly_pace_accepts_naive_datetime():
 
     assert result.as_of.tzinfo == TOKYO
     assert result.days_elapsed == 10
+
+
+def test_build_combined_forecast_returns_consistent_snapshot():
+    as_of = datetime(2024, 1, 15, 12, 0, tzinfo=TOKYO)
+    params = CombinedForecastInput(
+        as_of=as_of,
+        current_spend=5000.0,
+        month_to_date_spend=90000.0,
+        daily_budget=10000.0,
+        monthly_budget=300000.0,
+    )
+
+    result = build_combined_forecast(params)
+
+    assert result.daily.projected_spend == pytest.approx(10000.0)
+    assert result.monthly.projected_month_end_spend == pytest.approx(186000.0)
+    assert result.daily_budget_gap == pytest.approx(0.0)
+    assert result.monthly_budget_gap == pytest.approx(-114000.0)
+
+
+def test_build_combined_forecast_handles_missing_budgets():
+    as_of = datetime(2024, 1, 15, 0, 5, tzinfo=TOKYO)
+    params = CombinedForecastInput(
+        as_of=as_of,
+        current_spend=100.0,
+        month_to_date_spend=2000.0,
+    )
+
+    result = build_combined_forecast(params)
+
+    assert result.daily.projected_spend == pytest.approx(28800.0)
+    assert result.daily_budget_gap is None
+    assert result.monthly_budget_gap is None
 

@@ -58,6 +58,28 @@ class MonthlyPaceResult:
     budget_utilization: Optional[float]
 
 
+@dataclass(frozen=True)
+class CombinedForecastInput:
+    """Inputs for building a consolidated day and month forecast snapshot."""
+
+    as_of: datetime
+    current_spend: float
+    month_to_date_spend: float
+    daily_budget: Optional[float] = None
+    monthly_budget: Optional[float] = None
+    timezone: ZoneInfo | None = None
+
+
+@dataclass(frozen=True)
+class CombinedForecastResult:
+    """Aggregated forecast output for alert generation."""
+
+    daily: DailyForecastResult
+    monthly: MonthlyPaceResult
+    daily_budget_gap: Optional[float]
+    monthly_budget_gap: Optional[float]
+
+
 def _coerce_timezone(tz: ZoneInfo | None) -> ZoneInfo:
     return tz or DEFAULT_TZ
 
@@ -149,5 +171,49 @@ def calculate_monthly_pace(params: MonthlyPaceInput) -> MonthlyPaceResult:
         days_elapsed=days_elapsed,
         days_in_month=days_in_month,
         budget_utilization=budget_utilization,
+    )
+
+
+def build_combined_forecast(params: CombinedForecastInput) -> CombinedForecastResult:
+    """Create a consolidated snapshot covering daily and monthly pacing."""
+
+    tz = _coerce_timezone(params.timezone)
+
+    daily = calculate_daily_projection(
+        DailyForecastInput(
+            as_of=params.as_of,
+            current_spend=params.current_spend,
+            daily_budget=params.daily_budget,
+            timezone=tz,
+        )
+    )
+    monthly = calculate_monthly_pace(
+        MonthlyPaceInput(
+            as_of=params.as_of,
+            month_to_date_spend=params.month_to_date_spend,
+            monthly_budget=params.monthly_budget,
+            timezone=tz,
+        )
+    )
+
+    if (
+        params.daily_budget is None
+        or params.daily_budget == 0
+        or daily.projected_spend is None
+    ):
+        daily_gap: Optional[float] = None
+    else:
+        daily_gap = daily.projected_spend - params.daily_budget
+
+    if params.monthly_budget is None or params.monthly_budget == 0:
+        monthly_gap: Optional[float] = None
+    else:
+        monthly_gap = monthly.projected_month_end_spend - params.monthly_budget
+
+    return CombinedForecastResult(
+        daily=daily,
+        monthly=monthly,
+        daily_budget_gap=daily_gap,
+        monthly_budget_gap=monthly_gap,
     )
 

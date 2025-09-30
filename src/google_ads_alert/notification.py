@@ -19,6 +19,7 @@ class SlackNotificationOptions:
     currency_symbol: str = "¥"
     timezone: ZoneInfo | None = None
     include_monthly_section: bool = True
+    include_spend_rate: bool = False
 
 
 def _format_currency(value: float, currency_symbol: str) -> str:
@@ -52,12 +53,16 @@ def _format_optional_percentage(value: Optional[float], fallback: str = "—") -
 
 
 def _daily_section(
-    forecast: CombinedForecastResult, currency_symbol: str
+    forecast: CombinedForecastResult, opts: SlackNotificationOptions
 ) -> Dict[str, List[Dict[str, str]] | str]:
     daily = forecast.daily
     fields: List[Dict[str, str]] = []
 
-    current_text = f"*本日時点の消化*\n{_format_currency(daily.current_spend, currency_symbol)}"
+    currency_symbol = opts.currency_symbol
+
+    current_text = (
+        f"*本日時点の消化*\n{_format_currency(daily.current_spend, currency_symbol)}"
+    )
     fields.append({"type": "mrkdwn", "text": current_text})
 
     if daily.projected_spend is None:
@@ -82,6 +87,16 @@ def _daily_section(
         projection_text = f"*当日24時予測*\n" + " / ".join(pieces)
 
     fields.append({"type": "mrkdwn", "text": projection_text})
+
+    if opts.include_spend_rate:
+        if daily.spend_rate_per_hour is None:
+            spend_rate_text = "*1時間あたりの消化*\n計算可能なデータが不足しています"
+        else:
+            spend_rate_text = (
+                "*1時間あたりの消化*\n"
+                f"{_format_currency(daily.spend_rate_per_hour, currency_symbol)}/時"
+            )
+        fields.append({"type": "mrkdwn", "text": spend_rate_text})
 
     return {"type": "section", "fields": fields}
 
@@ -150,7 +165,7 @@ def build_slack_notification_payload(
                 }
             ],
         },
-        _daily_section(forecast, opts.currency_symbol),
+        _daily_section(forecast, opts),
     ]
 
     if opts.include_monthly_section:

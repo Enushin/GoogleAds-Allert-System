@@ -51,6 +51,23 @@ from .workflow import (
     dispatch_slack_alert,
 )
 from .logging_utils import LoggingConfig, configure_logging, get_logger
+from .cli import (
+    DoctorCheck,
+    DoctorReport,
+    SchedulePreview,
+    SchedulePreviewWindow,
+    build_argument_parser,
+    main as cli_main,
+    render_report,
+    render_schedule_preview,
+    run_doctor,
+    run_schedule_preview,
+    RunResult,
+    RunError,
+    render_run_result,
+    run_once,
+    generate_schedule_preview,
+)
 
 __all__ = [
     "ApplicationConfig",
@@ -97,4 +114,19 @@ __all__ = [
     "LoggingConfig",
     "configure_logging",
     "get_logger",
+    "DoctorCheck",
+    "DoctorReport",
+    "SchedulePreview",
+    "SchedulePreviewWindow",
+    "build_argument_parser",
+    "cli_main",
+    "render_report",
+    "render_schedule_preview",
+    "run_doctor",
+    "run_schedule_preview",
+    "RunResult",
+    "RunError",
+    "render_run_result",
+    "run_once",
+    "generate_schedule_preview",
 ]

@@ -1,0 +1,365 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from google_ads_alert.cli import (
+    DoctorCheck,
+    DoctorReport,
+    RunError,
+    RunResult,
+    SchedulePreview,
+    SchedulePreviewWindow,
+    build_argument_parser,
+    generate_schedule_preview,
+    main,
+    render_report,
+    render_run_result,
+    render_schedule_preview,
+    run_doctor,
+    run_once,
+    run_schedule_preview,
+)
+from google_ads_alert.config import ConfigError, load_config
+from google_ads_alert.forecast import (
+    CombinedForecastResult,
+    DailyForecastResult,
+    MonthlyPaceResult,
+)
+from google_ads_alert.google_ads_client import DailyCostSummary, MonthToDateCostSummary
+from google_ads_alert.workflow import ForecastSnapshot
+
+
+MIN_ENV = {
+    "GOOGLE_ADS_DEVELOPER_TOKEN": "dev-token",
+    "GOOGLE_ADS_CLIENT_ID": "client-id",
+    "GOOGLE_ADS_CLIENT_SECRET": "secret",
+    "GOOGLE_ADS_REFRESH_TOKEN": "refresh-token",
+    "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890",
+    "SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/T000/B000/XXXX",
+}
+
+
+def test_run_doctor_successful() -> None:
+    report = run_doctor(base_env=MIN_ENV)
+
+    assert report.passed
+    assert all(check.passed for check in report.checks)
+
+
+def test_run_doctor_reports_config_error() -> None:
+    report = run_doctor(base_env={})
+
+    assert not report.passed
+    assert report.errors
+
+
+def test_run_doctor_flags_invalid_schedule() -> None:
+    env = {**MIN_ENV, "ALERT_RUN_COUNT": "0"}
+    report = run_doctor(base_env=env)
+
+    assert not report.passed
+    assert any(check.name == "schedule.generate" and not check.passed for check in report.checks)
+
+
+def test_render_report_includes_failures() -> None:
+    report = DoctorReport(
+        checks=(
+            DoctorCheck(name="ok", passed=True, details="fine"),
+            DoctorCheck(name="bad", passed=False, details="problem"),
+        ),
+        errors=("fatal",),
+    )
+
+    text = render_report(report)
+    assert "FAIL" in text
+    assert "problem" in text
+    assert "fatal" in text
+
+
+def test_main_returns_exit_code(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_doctor(env_path=None, *, base_env=None):
+        captured["env_path"] = env_path
+        return DoctorReport(checks=(DoctorCheck(name="ok", passed=True, details="done"),))
+
+    monkeypatch.setattr("google_ads_alert.cli.run_doctor", fake_run_doctor)
+
+    exit_code = main(["doctor", "--env-file", "sample.env"])
+
+    assert exit_code == 0
+    assert captured["env_path"] == "sample.env"
+
+    output = capsys.readouterr().out
+    assert "Doctor summary" in output
+
+
+def test_main_propagates_failure(monkeypatch, capsys) -> None:
+    def fake_run_doctor(env_path=None, *, base_env=None):
+        return DoctorReport(
+            checks=(DoctorCheck(name="bad", passed=False, details="oops"),)
+        )
+
+    monkeypatch.setattr("google_ads_alert.cli.run_doctor", fake_run_doctor)
+
+    exit_code = main(["doctor"])
+
+    assert exit_code == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_build_argument_parser_sets_prog() -> None:
+    parser = build_argument_parser()
+    assert parser.prog == "google_ads_alert"
+
+
+def test_generate_schedule_preview_returns_windows() -> None:
+    env = {**MIN_ENV, "ALERT_TIMEZONE": "UTC"}
+    config = load_config(env)
+    reference = datetime(2024, 1, 1, 7, 0, tzinfo=ZoneInfo("UTC"))
+
+    preview = generate_schedule_preview(config, days=2, reference_time=reference)
+
+    assert preview.generated_at.tzinfo == ZoneInfo("UTC")
+    assert len(preview.windows) == 2
+    assert all(run.tzinfo == ZoneInfo("UTC") for run in preview.windows[0].run_times)
+
+
+def test_run_schedule_preview_uses_base_env() -> None:
+    env = {**MIN_ENV, "ALERT_TIMEZONE": "UTC"}
+    reference = datetime(2024, 1, 1, 7, 0, tzinfo=ZoneInfo("UTC"))
+
+    preview = run_schedule_preview(None, base_env=env, days=1, reference_time=reference)
+
+    assert preview.windows
+
+
+def test_render_schedule_preview_formats_output() -> None:
+    preview = SchedulePreview(
+        generated_at=datetime(2024, 1, 1, 7, 0, tzinfo=ZoneInfo("UTC")),
+        windows=(
+            SchedulePreviewWindow(date=date(2024, 1, 1), run_times=()),
+        ),
+    )
+
+    text = render_schedule_preview(preview)
+    assert "Schedule preview" in text
+    assert "no remaining runs" in text
+
+
+def test_main_schedule_command(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_schedule(env_path=None, *, days, base_env=None, reference_time=None):
+        captured["env_path"] = env_path
+        captured["days"] = days
+        return SchedulePreview(
+            generated_at=datetime(2024, 1, 1, tzinfo=ZoneInfo("UTC")),
+            windows=(
+                SchedulePreviewWindow(
+                    date=date(2024, 1, 1),
+                    run_times=(datetime(2024, 1, 1, 8, 0, tzinfo=ZoneInfo("UTC")),),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("google_ads_alert.cli.run_schedule_preview", fake_run_schedule)
+
+    exit_code = main(["schedule", "--days", "2", "--env-file", "sample.env"])
+
+    assert exit_code == 0
+    assert captured["env_path"] == "sample.env"
+    assert captured["days"] == 2
+
+    output = capsys.readouterr().out
+    assert "Schedule preview" in output
+
+
+def test_main_schedule_reports_errors(monkeypatch, capsys) -> None:
+    def fake_run_schedule(env_path=None, *, days, base_env=None, reference_time=None):
+        raise ConfigError("boom")
+
+    monkeypatch.setattr("google_ads_alert.cli.run_schedule_preview", fake_run_schedule)
+
+    exit_code = main(["schedule"])
+
+    assert exit_code == 1
+    assert "boom" in capsys.readouterr().err
+
+
+def test_run_once_dry_run(monkeypatch) -> None:
+    env = {
+        **MIN_ENV,
+        "DAILY_BUDGET": "100000",
+        "MONTHLY_BUDGET": "3000000",
+        "ALERT_TIMEZONE": "UTC",
+    }
+
+    as_of = datetime(2024, 1, 1, 12, 0, tzinfo=ZoneInfo("UTC"))
+
+    class DummyService:
+        def __init__(self, config, transport):
+            self._config = config
+            self._transport = transport
+
+        def fetch_daily_cost(self, reference):
+            return DailyCostSummary(
+                as_of=reference,
+                report_start=reference.replace(hour=0, minute=0, second=0, microsecond=0),
+                report_end=reference.replace(hour=0, minute=0, second=0, microsecond=0)
+                + timedelta(days=1),
+                total_cost_micros=12_345_000,
+            )
+
+        def fetch_month_to_date_cost(self, reference):
+            start = reference.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end = reference.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            return MonthToDateCostSummary(
+                as_of=reference,
+                report_start=start,
+                report_end=end,
+                total_cost_micros=67_890_000,
+            )
+
+    monkeypatch.setattr("google_ads_alert.cli.GoogleAdsCostService", DummyService)
+
+    result = run_once(
+        None,
+        base_env=env,
+        dry_run=True,
+        transport_factory=lambda config, env_values: object(),
+        reference_time=as_of,
+    )
+
+    assert result.dry_run
+    assert not result.delivered
+    assert result.snapshot.as_of == as_of
+    assert result.payload["blocks"]
+
+
+def test_render_run_result_outputs_payload(monkeypatch) -> None:
+    env = {
+        **MIN_ENV,
+        "DAILY_BUDGET": "100000",
+        "MONTHLY_BUDGET": "3000000",
+    }
+    as_of = datetime(2024, 5, 1, 9, 30, tzinfo=ZoneInfo("UTC"))
+
+    class DummyService:
+        def __init__(self, config, transport):
+            self._config = config
+            self._transport = transport
+
+        def fetch_daily_cost(self, reference):
+            return DailyCostSummary(
+                as_of=reference,
+                report_start=reference.replace(hour=0, minute=0, second=0, microsecond=0),
+                report_end=reference.replace(hour=0, minute=0, second=0, microsecond=0)
+                + timedelta(days=1),
+                total_cost_micros=5_000_000_000,
+            )
+
+        def fetch_month_to_date_cost(self, reference):
+            start = reference.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end = reference.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            return MonthToDateCostSummary(
+                as_of=reference,
+                report_start=start,
+                report_end=end,
+                total_cost_micros=25_000_000_000,
+            )
+
+    monkeypatch.setattr("google_ads_alert.cli.GoogleAdsCostService", DummyService)
+
+    result = run_once(
+        None,
+        base_env=env,
+        dry_run=True,
+        transport_factory=lambda config, env_values: object(),
+        reference_time=as_of,
+    )
+
+    text = render_run_result(result)
+    assert "Run result" in text
+    assert "Payload" in text
+    assert "5,000.00" in text
+
+
+def test_main_run_command(monkeypatch, capsys) -> None:
+    as_of = datetime(2024, 1, 1, tzinfo=ZoneInfo("UTC"))
+    snapshot = ForecastSnapshot(
+        as_of=as_of,
+        daily_cost=DailyCostSummary(
+            as_of=as_of,
+            report_start=as_of - timedelta(days=1),
+            report_end=as_of + timedelta(days=1),
+            total_cost_micros=0,
+        ),
+        month_to_date_cost=MonthToDateCostSummary(
+            as_of=as_of,
+            report_start=as_of.replace(day=1),
+            report_end=as_of + timedelta(days=1),
+            total_cost_micros=0,
+        ),
+        forecast=CombinedForecastResult(
+            daily=DailyForecastResult(
+                as_of=as_of,
+                current_spend=0.0,
+                elapsed=timedelta(hours=1),
+                day_duration=timedelta(hours=24),
+                projected_spend=0.0,
+                spend_rate_per_hour=0.0,
+                budget_utilization=0.0,
+            ),
+            monthly=MonthlyPaceResult(
+                as_of=as_of,
+                month_to_date_spend=0.0,
+                average_daily_spend=0.0,
+                projected_month_end_spend=0.0,
+                days_elapsed=1,
+                days_in_month=31,
+                budget_utilization=0.0,
+            ),
+            daily_budget_gap=0.0,
+            monthly_budget_gap=0.0,
+            daily_budget=0.0,
+            monthly_budget=0.0,
+        ),
+    )
+
+    sentinel = RunResult(
+        snapshot=snapshot,
+        payload={"ok": True},
+        delivered=False,
+        dry_run=True,
+    )
+
+    def fake_run_once(env_path, **kwargs):
+        assert env_path == "sample.env"
+        assert kwargs["dry_run"] is True
+        return sentinel
+
+    def fake_render(result):
+        assert result is sentinel
+        return "rendered"
+
+    monkeypatch.setattr("google_ads_alert.cli.run_once", fake_run_once)
+    monkeypatch.setattr("google_ads_alert.cli.render_run_result", fake_render)
+
+    exit_code = main(["run", "--env-file", "sample.env", "--dry-run"])
+
+    assert exit_code == 0
+    assert "rendered" in capsys.readouterr().out
+
+
+def test_main_run_reports_errors(monkeypatch, capsys) -> None:
+    def fake_run_once(env_path, **kwargs):
+        raise RunError("failed")
+
+    monkeypatch.setattr("google_ads_alert.cli.run_once", fake_run_once)
+
+    exit_code = main(["run"])
+
+    assert exit_code == 1
+    assert "failed" in capsys.readouterr().err

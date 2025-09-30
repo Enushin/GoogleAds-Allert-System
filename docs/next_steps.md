@@ -43,7 +43,12 @@ language: "ja"
 - [ ] スケジューラ（APSchedulerやCloud Scheduler等）を活用し、ユーザー指定時刻でのジョブ実行を実現する。
 - [x] Combined forecast結果を通知フォーマットへ統合し、UI／メッセージ例を作成する。
     - `workflow.py` にスナップショット作成とSlackペイロード送信ユーティリティを追加し、`build_slack_notification_payload` を利用した通知処理を一元化した。
-- [ ] プロジェクト全体の設定検証コマンド（`python -m google_ads_alert doctor`想定）を実装し、運用前セルフチェック手順を整備する。
+- [x] プロジェクト全体の設定検証コマンド（`python -m google_ads_alert doctor`）を実装し、運用前セルフチェック手順を整備する。
+    - `google_ads_alert.cli.run_doctor` で環境変数または `.env` ファイルから設定を読み込み、Webhook・予算設定・スケジュール生成を検証できるようになった。
+    - `python -m google_ads_alert schedule` で設定済みスケジュールの今後の実行時刻を日本語タイムゾーンに合わせて確認できるプレビュー機能を追加した。
+- [x] 単発実行用のCLI（`python -m google_ads_alert run`）を実装し、API問い合わせからSlack送信までの一連のフローを検証できるようにする。
+    - `run_once` で `GOOGLE_ADS_TRANSPORT` 経由のカスタムトランスポートを組み込み、`--dry-run` ではSlack送信をスキップしてペイロードを表示できる。
+    - Slack送信ファクトリも `SLACK_SENDER_FACTORY` で差し替え可能とし、Webhookが利用できない環境でもJSON出力で確認できる。
 
 ## 5. 運用と監視
 - [ ] ログ出力ポリシー（ログレベル、フォーマット、出力先）を定義し、主要イベントとエラートレースを確実に記録できるよう整備する。

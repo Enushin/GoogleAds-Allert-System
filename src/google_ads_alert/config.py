@@ -3,6 +3,7 @@ from __future__ import annotations
 """Environment driven configuration loading helpers."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 import os
@@ -181,11 +182,78 @@ def load_config(env: Mapping[str, str] | None = None) -> ApplicationConfig:
     )
 
 
+def load_env_file(path: os.PathLike[str] | str, *, encoding: str = "utf-8") -> dict[str, str]:
+    """Parse a ``.env`` style file and return its key/value pairs."""
+
+    env_path = Path(path)
+    try:
+        lines = env_path.read_text(encoding=encoding).splitlines()
+    except FileNotFoundError as exc:  # pragma: no cover - Path raises FileNotFoundError
+        raise ConfigError(f"Environment file not found: {env_path}") from exc
+
+    values: dict[str, str] = {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+
+        key, sep, value = line.partition("=")
+        if not sep:
+            raise ConfigError(f"Invalid environment line: {raw_line!r}")
+
+        key = key.strip()
+        if not key:
+            raise ConfigError(f"Missing key in environment line: {raw_line!r}")
+
+        value = value.strip()
+        if not value:
+            values[key] = ""
+            continue
+
+        if value[0] in {'"', "'"}:
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote:
+                raise ConfigError(f"Unterminated quoted value in line: {raw_line!r}")
+            value = value[1:-1]
+        else:
+            comment_index = value.find(" #")
+            if comment_index != -1:
+                value = value[:comment_index].rstrip()
+
+        values[key] = value
+
+    return values
+
+
+def load_config_from_env_file(
+    path: os.PathLike[str] | str,
+    *,
+    base_env: Mapping[str, str] | None = None,
+    override_existing: bool = True,
+) -> ApplicationConfig:
+    """Load :class:`ApplicationConfig` from a ``.env`` file."""
+
+    file_values = load_env_file(path)
+    base_values = dict(_read_env(base_env))
+
+    if override_existing:
+        merged: dict[str, str] = {**base_values, **file_values}
+    else:
+        merged = {**file_values, **{k: v for k, v in base_values.items() if k not in file_values}}
+
+    return load_config(merged)
+
+
 __all__ = [
     "ApplicationConfig",
     "ConfigError",
     "SlackConfig",
     "load_config",
+    "load_config_from_env_file",
+    "load_env_file",
     "load_google_ads_config",
     "load_schedule_config",
     "load_slack_config",
